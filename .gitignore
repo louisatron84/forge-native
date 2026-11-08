@@ -1,0 +1,6 @@
+/target
+*.pdb
+/releases
+/.vscode
+/.idea
+__pycache__/
