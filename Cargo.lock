@@ -1727,6 +1727,11 @@ version = "1.0.0-dev"
 [[package]]
 name = "forge-text"
 version = "1.0.0-dev"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "forge-update"
