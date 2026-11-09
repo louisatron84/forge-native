@@ -340,7 +340,11 @@ impl Workspace {
             }
             "view.files" => self.reveal_panel("files", cx),
             "view.outline" => self.reveal_panel("outline", cx),
-            "search.project" => self.reveal_panel("search", cx),
+            "search.project" => {
+                self.reveal_panel("search", cx);
+                let selected = Some(editor.read(cx).selected_text(cx)).filter(|s| !s.is_empty());
+                self.search.update(cx, |s, cx| s.focus(selected, window, cx));
+            }
             "git.show" => self.reveal_panel("git", cx),
             "panel.output" => self.reveal_panel("output", cx),
             "panel.problems" => self.reveal_panel("problems", cx),

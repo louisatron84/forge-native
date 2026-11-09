@@ -5,5 +5,6 @@
 pub mod backups;
 pub mod files;
 pub mod project_dir;
+pub mod search;
 pub mod text_file;
 pub mod user_state;

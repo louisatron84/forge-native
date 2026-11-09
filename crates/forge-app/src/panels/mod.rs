@@ -3,6 +3,7 @@
 
 pub mod files;
 pub mod output;
+pub mod search;
 pub mod terminal;
 pub mod tests;
 

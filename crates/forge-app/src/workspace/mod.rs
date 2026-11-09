@@ -17,6 +17,7 @@ use crate::find_bar::{FindBar, FindOption};
 use crate::palette::{Choice, CommandItem, Palette, PaletteEvent};
 use crate::panels::files::{FileTree, FileTreeEvent};
 use crate::panels::output::OutputPanel;
+use crate::panels::search::{SearchEvent, SearchPanel};
 use crate::panels::terminal::TerminalPanel;
 use crate::panels::tests::{TestsEvent, TestsPanel, Which};
 use crate::panels::{self, Placeholder};
@@ -97,6 +98,7 @@ pub struct Workspace {
     pub(crate) terminal: Entity<TerminalPanel>,
     pub(crate) output: Entity<OutputPanel>,
     pub(crate) tests: Entity<TestsPanel>,
+    pub(crate) search: Entity<SearchPanel>,
     pub(crate) run: run::RunState,
     pub(crate) pyenv: pyenv::PyEnvState,
     /// The interpreter setting last applied (a change re-checks the environment).
@@ -158,6 +160,7 @@ impl Workspace {
         let terminal = cx.new(TerminalPanel::new);
         let output = cx.new(|cx| OutputPanel::new(window, cx));
         let tests = cx.new(TestsPanel::new);
+        let search = cx.new(|cx| SearchPanel::new(window, cx));
         let mut subs = Vec::new();
         for (i, ed) in editors.iter().enumerate() {
             subs.push(cx.subscribe_in(ed, window, move |this, _, event: &EditorEvent, window, cx| {
@@ -166,6 +169,14 @@ impl Workspace {
         }
         subs.push(cx.subscribe_in(&file_tree, window, Self::on_tree_event));
         subs.push(cx.subscribe_in(&output, window, Self::on_output_event));
+        subs.push(cx.subscribe_in(&search, window, |this, _, e: &SearchEvent, window, cx| match e {
+            SearchEvent::OpenMatch(path, line, col, len) => {
+                this.open_path(path.clone(), window, cx);
+                let ed = this.editors[this.tabs.active_group.min(1)].clone();
+                let (line, col, len) = (*line, *col, *len);
+                ed.update(cx, |e, cx| e.select(Pos::new(line, col), Pos::new(line, col + len), cx));
+            }
+        }));
         subs.push(cx.subscribe_in(&tests, window, |this, _, e: &TestsEvent, window, cx| match e {
             TestsEvent::Open(path, line) => this.open_path_at(path.clone(), Some(*line), window, cx),
             TestsEvent::Run(which) => this.run_tests(which.clone(), window, cx),
@@ -219,6 +230,7 @@ impl Workspace {
             terminal,
             output,
             tests,
+            search,
             run: run::RunState::default(),
             pyenv: pyenv::PyEnvState::default(),
             python_path_seen: None,
@@ -383,6 +395,20 @@ impl Workspace {
                 self.run_command("settings.open", window, cx);
             }
             return;
+        }
+        // Alt+C / Alt+W / Alt+R toggle the search options while typing in project search.
+        if self.search.read(cx).has_focus(window, cx) {
+            let option = match key.as_str() {
+                "Alt+C" => Some(FindOption::Case),
+                "Alt+W" => Some(FindOption::Word),
+                "Alt+R" => Some(FindOption::Regex),
+                _ => None,
+            };
+            if let Some(o) = option {
+                self.search.update(cx, |s, cx| s.toggle(o, cx));
+                cx.stop_propagation();
+                return;
+            }
         }
         // Alt+C / Alt+W / Alt+R toggle the find options while typing in the find bar.
         if self.find_bar.read(cx).has_focus(window, cx) {
@@ -577,6 +603,7 @@ impl Workspace {
         self.file_tree.update(cx, |t, cx| t.set_root(Some(folder.clone()), cx));
         self.terminal.update(cx, |t, cx| t.move_idle_to(Some(folder.clone()), cx));
         self.tests.update(cx, |t, cx| t.set_root(Some(folder.clone()), cx));
+        self.search.update(cx, |s, cx| s.set_root(Some(folder.clone()), cx));
         self.refresh_recent(cx);
         self.restore_layout(&path_str, window, cx);
         self.offer_restore(&path_str, window, cx);
@@ -907,6 +934,10 @@ impl Workspace {
             if at_root && (name == "requirements.txt" || name == "pyproject.toml") {
                 self.refresh_python_env(cx);
             }
+        }
+        // Project search reads files from disk: refresh its results after saving.
+        if self.tasks.is_shown("search") {
+            self.search.update(cx, |s, cx| s.refresh(cx));
         }
         if forge_core::testing::is_test_file(path) {
             self.tests.update(cx, |t, cx| t.discover(cx));
@@ -1268,6 +1299,9 @@ impl Workspace {
         }
         if id == "output" {
             return self.output.clone().into();
+        }
+        if id == "search" {
+            return self.search.clone().into();
         }
         if id == "tests" {
             self.tests.update(cx, |t, cx| t.shown(cx));

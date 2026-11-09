@@ -53,7 +53,7 @@ with the same text, and the old source and tests. This ledger is how work resume
 ## M3: Language and tooling (Tier 3) (27)
 
 - [ ] T3-01 Language Server Protocol client (Pyright)
-- [ ] T3-02 Search across the project (Ctrl+Shift+F, case / word / regex, v0.12)
+- [x] T3-02 Search across the project (Ctrl+Shift+F, case / word / regex, v0.12)
 - [ ] T3-03 Git status in the file tree (M/U/A/D badges, folder dots, auto-refresh, v0.12)
 - [ ] T3-04 Debugger (DAP, debugpy): breakpoints, stepping, call stack, variables, debug console with expression evaluation, hover values, pause on uncaught exceptions
 - [ ] T3-05 Find references
