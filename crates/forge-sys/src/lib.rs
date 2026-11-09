@@ -4,6 +4,8 @@
 
 pub mod backups;
 pub mod files;
+pub mod git;
+pub mod process;
 pub mod project_dir;
 pub mod search;
 pub mod text_file;

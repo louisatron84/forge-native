@@ -7,6 +7,8 @@ pub mod deps;
 pub mod dock;
 pub mod dotenv;
 pub mod fuzzy;
+pub mod git;
+pub mod history;
 pub mod keybindings;
 pub mod lint;
 pub mod names;

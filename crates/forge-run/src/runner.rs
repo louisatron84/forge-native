@@ -222,14 +222,7 @@ impl Drop for PythonRun {
 
 /// No console window flashes up for the program on Windows.
 pub fn hide_window(cmd: &mut Command) {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    #[cfg(not(windows))]
-    let _ = cmd;
+    forge_sys::process::hide_window(cmd);
 }
 
 #[cfg(test)]

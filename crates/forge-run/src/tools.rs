@@ -6,11 +6,9 @@
 //! Everything here blocks: call it from a background thread.
 
 use std::collections::HashMap;
-use std::io::{Read, Write};
 use std::path::Path;
-use std::process::{Command, Stdio};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Tool {
@@ -58,61 +56,11 @@ impl ToolResult {
     }
 }
 
-struct Output {
-    code: Option<i32>,
-    stdout: String,
-    stderr: String,
-    /// It couldn't be started at all.
-    failed: bool,
-}
+use forge_sys::process::{run_captured, Captured as Output};
 
 /// Run a program with `input` on stdin; killed after `timeout`.
 fn run(cmd: &str, args: &[String], cwd: &Path, input: &str, timeout: Duration) -> Output {
-    let failed = || Output { code: None, stdout: String::new(), stderr: String::new(), failed: true };
-    let mut command = Command::new(cmd);
-    command
-        .args(args)
-        .current_dir(cwd)
-        .env("PYTHONIOENCODING", "utf-8")
-        .env("NO_COLOR", "1")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    crate::runner::hide_window(&mut command);
-    let Ok(mut child) = command.spawn() else { return failed() };
-    // Feed stdin and drain both pipes on threads, so a large output can't block it.
-    let mut stdin = child.stdin.take();
-    let input = input.to_owned();
-    let writer = std::thread::spawn(move || {
-        if let Some(s) = stdin.as_mut() {
-            let _ = s.write_all(input.as_bytes());
-        }
-    });
-    let drain = |pipe: Option<Box<dyn Read + Send>>| {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            if let Some(mut p) = pipe {
-                let _ = p.read_to_end(&mut bytes);
-            }
-            String::from_utf8_lossy(&bytes).replace("\r\n", "\n")
-        })
-    };
-    let out = drain(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
-    let err = drain(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
-    let started = Instant::now();
-    let code = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status.code(),
-            Ok(None) if started.elapsed() < timeout => std::thread::sleep(Duration::from_millis(5)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break None;
-            }
-        }
-    };
-    let _ = writer.join();
-    Output { code, stdout: out.join().unwrap_or_default(), stderr: err.join().unwrap_or_default(), failed: false }
+    run_captured(cmd, args, cwd, &[("PYTHONIOENCODING", "utf-8"), ("NO_COLOR", "1")], input, timeout)
 }
 
 /// How to start a tool: (program, arguments before the tool's own).
@@ -305,9 +253,9 @@ mod unit {
 
     #[test]
     fn error_text_keeps_the_last_four_lines() {
-        let o = Output { code: Some(2), stdout: "out".into(), stderr: "1\n2\n\n3\n4\n5\n".into(), failed: false };
+        let o = Output { code: Some(2), stdout: "out".into(), stderr: "1\n2\n\n3\n4\n5\n".into(), ..Default::default() };
         assert_eq!(error_text(&o), "2\n3\n4\n5");
-        let o = Output { code: Some(2), stdout: String::new(), stderr: String::new(), failed: false };
+        let o = Output { code: Some(2), ..Default::default() };
         assert_eq!(error_text(&o), "it failed");
     }
 }
