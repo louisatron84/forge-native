@@ -56,7 +56,7 @@ impl Workspace {
             | "debug.editBreakpoint" => has_doc,
             "editor.renameSymbol" => has_doc && self.editor_focused(window, cx),
             "editor.format" | "editor.formatSelection" | "editor.organizeImports" | "editor.fixAll" => py_doc,
-            "find.close" => false,
+            "find.close" => self.find_bar.read(cx).is_open(),
             "nav.projectSymbol"
             | "file.saveTemplate"
             | "run.selectConfig"
@@ -240,6 +240,13 @@ impl Workspace {
                     cx.notify();
                 }
             }
+
+            // ---------- find ----------
+            "find.open" | "find.replace" => {
+                let replace = id == "find.replace";
+                self.find_bar.update(cx, |f, cx| f.open(&editor, replace, window, cx));
+            }
+            "find.close" => self.find_bar.update(cx, |f, cx| f.close(window, cx)),
 
             // ---------- the editor ----------
             "editor.toggleComment" => editor.update(cx, |e, cx| e.toggle_comment(cx)),

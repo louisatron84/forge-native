@@ -48,6 +48,7 @@ impl Workspace {
             .min_h_0()
             .children(groups.iter().enumerate().map(|(i, g)| {
                 div()
+                    .relative()
                     .flex()
                     .flex_col()
                     .flex_1()
@@ -64,6 +65,7 @@ impl Workspace {
                             })
                             .when(!g.docs.is_empty(), |d| d.child(self.editors[i.min(1)].clone())),
                     )
+                    .when(i == active_group, |d| d.child(self.find_bar.clone()))
             }))
             .into_any_element()
     }

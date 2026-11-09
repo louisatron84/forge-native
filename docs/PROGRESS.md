@@ -32,7 +32,7 @@ with the same text, and the old source and tests. This ledger is how work resume
 
 - [x] T2-01 Tabs for several open files
 - [x] T2-02 Python syntax highlighting (own tokenizer, v0.5)
-- [ ] T2-03 Find/replace in the file (case, whole word, regex with $1 groups, v0.7)
+- [x] T2-03 Find/replace in the file (case, whole word, regex with $1 groups, v0.7)
 - [ ] T2-04 Run the current Python file and show its output in a panel (F5, auto-save, venv detection, `input()`, clickable tracebacks, v0.8)
 - [ ] T2-05 Integrated terminal (xterm.js + node-pty, Ctrl+`, v0.9)
 - [x] T2-06 Command palette (Ctrl+Shift+P), quick open (Ctrl+P), go to line (Ctrl+G)

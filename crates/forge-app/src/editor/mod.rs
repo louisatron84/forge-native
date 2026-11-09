@@ -210,6 +210,8 @@ pub struct EditorView {
     dragging_minimap: bool,
     pub(crate) autoscroll: Option<Autoscroll>,
     pub(crate) layout: Option<LayoutCache>,
+    /// Find matches to highlight (sorted by position).
+    pub(crate) matches: std::sync::Arc<Vec<forge_text::find::Match>>,
 }
 
 impl Focusable for EditorView {
@@ -237,6 +239,7 @@ impl EditorView {
             dragging_minimap: false,
             autoscroll: None,
             layout: None,
+            matches: std::sync::Arc::new(Vec::new()),
         }
     }
 
@@ -415,6 +418,21 @@ impl EditorView {
     }
 
     // ---------- editing ----------
+
+    /// Make an edit from outside (find/replace, code actions) as one undo step;
+    /// the cursor goes where `edit` says.
+    pub fn run_edit(&mut self, cx: &mut Context<Self>, edit: impl FnOnce(&mut TextBuffer) -> Pos) {
+        self.edit_single(EditKind::Other, cx, |b, _| {
+            let p = edit(b);
+            (p, p)
+        });
+    }
+
+    /// Highlight these ranges (find matches); empty to clear.
+    pub fn set_matches(&mut self, matches: Vec<forge_text::find::Match>, cx: &mut Context<Self>) {
+        self.matches = std::sync::Arc::new(matches);
+        cx.notify();
+    }
 
     /// Run an edit with one cursor as one undo step; `op` returns (cursor, anchor).
     fn edit_single(

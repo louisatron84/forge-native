@@ -399,6 +399,27 @@ impl gpui_kit::Element for EditorElement {
                 ));
             }
         }
+        // Find matches on the visible lines (the list is sorted, so skip to the first visible one).
+        let matches = self.editor.read(cx).matches.clone();
+        if let (Some(first), Some(last)) = (row_layouts.first(), row_layouts.last()) {
+            let start = matches.partition_point(|m| m.start.line < first.line);
+            for m in matches[start..].iter().take_while(|m| m.start.line <= last.line) {
+                if let Some(r) = row_layouts.iter().find(|r| r.line == m.start.line) {
+                    let x0 = x_of(r, m.start.col);
+                    let x1 = if m.end.line == m.start.line {
+                        x_of(r, m.end.col)
+                    } else {
+                        text_left + f32::from(r.shaped.width)
+                    };
+                    if x1 > x0 {
+                        back.push(fill(
+                            Bounds::new(point(px(x0), px(r.y)), size(px(x1 - x0), line_height)),
+                            theme.match_bg,
+                        ));
+                    }
+                }
+            }
+        }
         let sel_color = if focused { theme.selection } else { theme.selection_unfocused };
         for &(a, h) in &selections {
             let (start, end) = if a <= h { (a, h) } else { (h, a) };

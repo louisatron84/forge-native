@@ -11,6 +11,7 @@ mod editors;
 use crate::app_state::{self, AppState};
 use crate::document::{Document, DocumentEvent};
 use crate::editor::{EditorEvent, EditorView};
+use crate::find_bar::{FindBar, FindOption};
 use crate::palette::{Choice, CommandItem, Palette, PaletteEvent};
 use crate::panels::files::{FileTree, FileTreeEvent};
 use crate::panels::{self, Placeholder};
@@ -54,6 +55,7 @@ pub struct Workspace {
     panels: HashMap<&'static str, AnyView>,
     pub(crate) file_tree: Entity<FileTree>,
     pub(crate) palette: Entity<Palette>,
+    pub(crate) find_bar: Entity<FindBar>,
     /// A short message in the status bar.
     pub(crate) note: Option<SharedString>,
     note_task: Option<Task<()>>,
@@ -103,6 +105,7 @@ impl Workspace {
         let editors = [cx.new(EditorView::new), cx.new(EditorView::new)];
         let file_tree = cx.new(FileTree::new);
         let palette = cx.new(|cx| Palette::new(window, cx));
+        let find_bar = cx.new(|cx| FindBar::new(window, cx));
         let mut subs = Vec::new();
         for (i, ed) in editors.iter().enumerate() {
             subs.push(cx.subscribe_in(ed, window, move |this, _, event: &EditorEvent, window, cx| {
@@ -147,6 +150,7 @@ impl Workspace {
             panels: HashMap::new(),
             file_tree,
             palette,
+            find_bar,
             note: None,
             note_task: None,
             drop_target: None,
@@ -223,6 +227,20 @@ impl Workspace {
         if key.is_empty() {
             return;
         }
+        // Alt+C / Alt+W / Alt+R toggle the find options while typing in the find bar.
+        if self.find_bar.read(cx).has_focus(window, cx) {
+            let option = match key.as_str() {
+                "Alt+C" => Some(FindOption::Case),
+                "Alt+W" => Some(FindOption::Word),
+                "Alt+R" => Some(FindOption::Regex),
+                _ => None,
+            };
+            if let Some(o) = option {
+                self.find_bar.update(cx, |f, cx| f.toggle(o, window, cx));
+                cx.stop_propagation();
+                return;
+            }
+        }
         if key == "Escape" && self.editing_layout {
             self.set_editing_layout(false, cx);
             cx.stop_propagation();
@@ -249,6 +267,7 @@ impl Workspace {
                 }
             }
             EditorEvent::Edited => {
+                self.find_bar.update(cx, |f, cx| f.refresh(window, cx));
                 self.backup_soon(cx);
                 self.update_title(window, cx);
                 cx.notify();
@@ -628,6 +647,11 @@ impl Workspace {
     /// Show each group's active file in its editor, and update everything that follows the active file.
     pub(crate) fn after_tabs_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_editors(window, cx);
+        let active_editor = self.editors[self.tabs.active_group.min(1)].downgrade();
+        self.find_bar.update(cx, |f, cx| {
+            f.switch_editor(Some(active_editor), cx);
+            f.refresh(window, cx);
+        });
         let active_path = self.active_doc().map(|d| PathBuf::from(d.read(cx).doc.path()));
         self.file_tree.update(cx, |t, cx| t.highlight(active_path.as_deref(), cx));
         self.update_title(window, cx);

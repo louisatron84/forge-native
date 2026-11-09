@@ -6,6 +6,7 @@
 mod app_state;
 mod document;
 mod editor;
+mod find_bar;
 mod palette;
 mod panels;
 mod theme;

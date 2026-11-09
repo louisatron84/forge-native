@@ -1885,6 +1885,7 @@ dependencies = [
  "forge-text",
  "gpui-kit",
  "gpui-pre",
+ "regex",
  "serde_json",
  "tempfile",
 ]
