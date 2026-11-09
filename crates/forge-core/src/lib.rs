@@ -14,3 +14,4 @@ pub mod project_state;
 pub mod run_config;
 pub mod settings;
 pub mod tabs;
+pub mod testing;

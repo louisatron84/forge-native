@@ -5,6 +5,7 @@
 use super::Workspace;
 use crate::app_state::{self, AppState};
 use crate::palette::Choice;
+use crate::panels::tests::Which;
 use forge_core::settings::{Theme as ThemeSetting, FONT_SIZE_MAX, FONT_SIZE_MIN};
 use forge_sys::files::create_entry;
 use forge_sys::user_state::ensure_project_settings;
@@ -102,8 +103,8 @@ impl Workspace {
             | "git.pull"
             | "git.push"
             | "git.fetch"
-            | "git.stageAll"
-            | "tests.stop" => false,
+            | "git.stageAll" => false,
+            "tests.stop" => self.tests.read(cx).is_running(),
             "terminal.kill" | "terminal.next" => {
                 self.tasks.is_shown("terminal") && self.terminal.read(cx).session_count() > 0
             }
@@ -254,6 +255,27 @@ impl Workspace {
                     self.run_task(t, window, cx);
                 }
             }
+
+            // ---------- tests ----------
+            "tests.runAll" => self.run_tests(Which::All, window, cx),
+            "tests.runFailed" => self.run_tests(Which::Failed, window, cx),
+            "tests.runFile" | "tests.runAtCursor" => {
+                if let Some(d) = self.active_doc() {
+                    let path = d.read(cx).doc.path().to_owned();
+                    let line = (id == "tests.runAtCursor").then(|| editor.read(cx).cursor().line);
+                    match self.tests.read(cx).ids_at(&path, line) {
+                        Some(ids) => self.run_tests(Which::These(ids), window, cx),
+                        None => {
+                            self.reveal_panel("tests", cx);
+                            self.tests.update(cx, |t, cx| {
+                                t.discover(cx);
+                                t.say("This file has no tests (test files are named test_*.py or *_test.py).", cx)
+                            });
+                        }
+                    }
+                }
+            }
+            "tests.stop" => self.tests.update(cx, |t, _| t.stop()),
 
             // ---------- Python ----------
             "python.selectInterpreter" => self.pick_interpreter(window, cx),

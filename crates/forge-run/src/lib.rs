@@ -5,5 +5,6 @@ pub mod env;
 pub mod pyenv;
 pub mod python;
 pub mod runner;
+pub mod tests;
 
 pub use runner::{PythonRun, RunEvent, RunSpec};

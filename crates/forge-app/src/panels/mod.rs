@@ -4,6 +4,7 @@
 pub mod files;
 pub mod output;
 pub mod terminal;
+pub mod tests;
 
 use crate::theme::ForgeTheme;
 use gpui_kit::{div, px, Context, IntoElement, ParentElement, Render, SharedString, Styled, Window};

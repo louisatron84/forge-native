@@ -236,7 +236,8 @@ impl Workspace {
                     })
                     .when(active == "output" && !collapsed, |d| {
                         d.child(crate::panels::output::actions(&self.output, &t))
-                    }),
+                    })
+                    .when(active == "tests" && !collapsed, |d| d.child(crate::panels::tests::actions(&self.tests, &t))),
             );
         let body = (!collapsed).then(|| {
             let content = if active == "editor" {

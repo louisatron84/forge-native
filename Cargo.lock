@@ -1949,6 +1949,7 @@ name = "forge-run"
 version = "1.0.0-dev"
 dependencies = [
  "forge-core",
+ "forge-sys",
  "serde_json",
  "tempfile",
 ]

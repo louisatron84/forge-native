@@ -48,7 +48,7 @@ with the same text, and the old source and tests. This ledger is how work resume
 - [x] T2-16 Python environment management (create, select and manage virtual environments)
 - [x] T2-17 Dependency management integration (pip, requirements.txt, pyproject.toml)
 - [ ] T2-18 Updates
-- [ ] T2-19 Test runner integration (pytest, unittest)
+- [x] T2-19 Test runner integration (pytest, unittest)
 
 ## M3: Language and tooling (Tier 3) (27)
 
@@ -189,3 +189,4 @@ with the same text, and the old source and tests. This ledger is how work resume
 - 2026-11-09: workspace shell: dock with the four tasks (layouts.json), tabs and split groups, file tree (create/rename/delete), palette (commands, files, line, choices, shortcut capture), Keyboard Shortcuts, Welcome page, status bar, save/close warnings, encodings, line endings, large/binary files, crash backups, workspace state. T1-01, T1-02, T1-08, T1-17..T1-21, T2-01, T2-06, T2-10, T2-11. Window with a project 77 MB (debug).
 - 2026-11-09: find/replace bar, Settings dialog and project settings, integrated terminal (alacritty_terminal on ConPTY/pty: several terminals, shells, copy/paste, selection, history, restored per project). T2-03, T2-05, T2-07, T2-08, T2-09, T2-12, T2-13. Window with a project and a shell 129 MB (debug).
 - 2026-11-09: Run with the Output panel, run configurations and tasks, Python environments (interpreter picker, .venv, packages, missing dependencies). T2-04, T2-14, T2-15, T2-16, T2-17. forge-run crate (real-Python tests).
+- 2026-11-09: Tests panel (pytest via JUnit XML, unittest via -v output; run all / failed / file / at cursor; failures link to their line). T2-19. M2 done except T2-18 (updates: with M5's installer work).

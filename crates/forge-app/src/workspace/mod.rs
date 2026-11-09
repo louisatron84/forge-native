@@ -18,6 +18,7 @@ use crate::palette::{Choice, CommandItem, Palette, PaletteEvent};
 use crate::panels::files::{FileTree, FileTreeEvent};
 use crate::panels::output::OutputPanel;
 use crate::panels::terminal::TerminalPanel;
+use crate::panels::tests::{TestsEvent, TestsPanel, Which};
 use crate::panels::{self, Placeholder};
 use crate::settings_view::{project_note, SettingsEvent, SettingsView};
 use forge_core::commands::key_string;
@@ -95,6 +96,7 @@ pub struct Workspace {
     pub(crate) settings_view: Entity<SettingsView>,
     pub(crate) terminal: Entity<TerminalPanel>,
     pub(crate) output: Entity<OutputPanel>,
+    pub(crate) tests: Entity<TestsPanel>,
     pub(crate) run: run::RunState,
     pub(crate) pyenv: pyenv::PyEnvState,
     /// The interpreter setting last applied (a change re-checks the environment).
@@ -155,6 +157,7 @@ impl Workspace {
         let settings_view = cx.new(|cx| SettingsView::new(window, cx));
         let terminal = cx.new(TerminalPanel::new);
         let output = cx.new(|cx| OutputPanel::new(window, cx));
+        let tests = cx.new(TestsPanel::new);
         let mut subs = Vec::new();
         for (i, ed) in editors.iter().enumerate() {
             subs.push(cx.subscribe_in(ed, window, move |this, _, event: &EditorEvent, window, cx| {
@@ -163,6 +166,12 @@ impl Workspace {
         }
         subs.push(cx.subscribe_in(&file_tree, window, Self::on_tree_event));
         subs.push(cx.subscribe_in(&output, window, Self::on_output_event));
+        subs.push(cx.subscribe_in(&tests, window, |this, _, e: &TestsEvent, window, cx| match e {
+            TestsEvent::Open(path, line) => this.open_path_at(path.clone(), Some(*line), window, cx),
+            TestsEvent::Run(which) => this.run_tests(which.clone(), window, cx),
+            TestsEvent::InstallPytest => this.pip_install("pytest", window, cx),
+            TestsEvent::Stop => this.tests.update(cx, |t, _| t.stop()),
+        }));
         subs.push(cx.subscribe_in(&settings_view, window, |this, _, event: &SettingsEvent, window, cx| match event {
             SettingsEvent::Changed => this.apply_settings(cx),
             SettingsEvent::Command(id) => this.run_command(id, window, cx),
@@ -209,6 +218,7 @@ impl Workspace {
             settings_view,
             terminal,
             output,
+            tests,
             run: run::RunState::default(),
             pyenv: pyenv::PyEnvState::default(),
             python_path_seen: None,
@@ -566,6 +576,7 @@ impl Workspace {
         self.refresh_python_env(cx);
         self.file_tree.update(cx, |t, cx| t.set_root(Some(folder.clone()), cx));
         self.terminal.update(cx, |t, cx| t.move_idle_to(Some(folder.clone()), cx));
+        self.tests.update(cx, |t, cx| t.set_root(Some(folder.clone()), cx));
         self.refresh_recent(cx);
         self.restore_layout(&path_str, window, cx);
         self.offer_restore(&path_str, window, cx);
@@ -897,6 +908,9 @@ impl Workspace {
                 self.refresh_python_env(cx);
             }
         }
+        if forge_core::testing::is_test_file(path) {
+            self.tests.update(cx, |t, cx| t.discover(cx));
+        }
         if let (Some(p), Some(root)) = (self.run.file_path.clone(), self.root.clone()) {
             if same_path(path, &p.to_string_lossy()) {
                 self.load_run_file(&root, window, cx);
@@ -1214,6 +1228,39 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Run tests: save files, find the interpreter, then run.
+    pub(crate) fn run_tests(&mut self, which: Which, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(root) = self.root.clone() else { return };
+        if self.tests.read(cx).is_running() {
+            return;
+        }
+        self.reveal_panel("tests", cx);
+        if !self.save_all_dirty(window, cx) {
+            self.tests.update(cx, |t, cx| t.say("Test run cancelled: a file could not be saved.", cx));
+            return;
+        }
+        let configured = Some(self.effective_settings(cx).python_path).filter(|p| !p.is_empty());
+        let known = self.pyenv.current.as_ref().map(|i| i.path.clone());
+        cx.spawn_in(window, async move |this, cx| {
+            let python = match known {
+                Some(p) => Some(p),
+                None => {
+                    cx.background_executor()
+                        .spawn(async move { forge_run::pyenv::resolve_python(&root, configured.as_deref()) })
+                        .await
+                }
+            };
+            this.update(cx, |ws, cx| {
+                ws.tests.update(cx, |t, cx| match python {
+                    Some(p) => t.run(which, p, cx),
+                    None => t.say("No Python interpreter found: pick one with 🐍 in the status bar.", cx),
+                });
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// The view of a panel (created the first time it's shown).
     pub(crate) fn panel_view(&mut self, id: &'static str, cx: &mut Context<Self>) -> AnyView {
         if id == "files" {
@@ -1221,6 +1268,10 @@ impl Workspace {
         }
         if id == "output" {
             return self.output.clone().into();
+        }
+        if id == "tests" {
+            self.tests.update(cx, |t, cx| t.shown(cx));
+            return self.tests.clone().into();
         }
         if id == "terminal" {
             // The first time it shows, its terminals start.
