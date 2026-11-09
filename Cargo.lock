@@ -1943,6 +1943,13 @@ version = "1.0.0-dev"
 [[package]]
 name = "forge-lsp"
 version = "1.0.0-dev"
+dependencies = [
+ "forge-core",
+ "futures",
+ "regex",
+ "serde_json",
+ "tempfile",
+]
 
 [[package]]
 name = "forge-run"
