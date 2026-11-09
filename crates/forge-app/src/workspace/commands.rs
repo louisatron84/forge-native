@@ -80,9 +80,10 @@ impl Workspace {
             | "palette.files"
             | "git.init" => has_folder,
             "tests.runFile" | "tests.runAtCursor" => has_doc,
-            // Need a debug session, a test run, a git repository or a last task: none yet.
-            "tasks.rerun"
-            | "debug.restart"
+            "tasks.rerun" => has_folder && self.run.last_task.is_some(),
+            "run.stop" => self.is_running(cx),
+            // Need a debug session, a test run or a git repository: none yet.
+            "debug.restart"
             | "debug.stepOver"
             | "debug.stepInto"
             | "debug.stepOut"
@@ -107,7 +108,7 @@ impl Workspace {
                 self.tasks.is_shown("terminal") && self.terminal.read(cx).session_count() > 0
             }
             "git.diffFile" => has_doc && has_folder,
-            "run.smart" | "run.file" | "run.memory" | "debug.start" => has_doc || has_folder,
+            "run.smart" | "run.file" | "run.memory" | "debug.start" => self.can_launch(),
             _ => true,
         }
     }
@@ -239,6 +240,18 @@ impl Workspace {
                     self.welcome_forced = true;
                     self.tasks.reveal("editor");
                     cx.notify();
+                }
+            }
+
+            // ---------- run ----------
+            "run.smart" | "run.file" => self.run_current_file(window, cx),
+            "run.stop" => self.stop_run(cx),
+            "run.selectConfig" => self.pick_run_config(window, cx),
+            "run.editConfigs" => self.edit_run_file(window, cx),
+            "tasks.run" => self.pick_task(window, cx),
+            "tasks.rerun" => {
+                if let Some(t) = self.run.last_task.clone() {
+                    self.run_task(t, window, cx);
                 }
             }
 
@@ -418,7 +431,7 @@ impl Workspace {
         }
     }
 
-    fn reveal_panel(&mut self, panel: &str, cx: &mut Context<Self>) {
+    pub(crate) fn reveal_panel(&mut self, panel: &str, cx: &mut Context<Self>) {
         self.tasks.reveal(panel);
         self.layouts_changed(cx);
         cx.notify();

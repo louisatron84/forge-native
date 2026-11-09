@@ -2,6 +2,7 @@
 //! and a stand-in for panels not ported to the native app yet.
 
 pub mod files;
+pub mod output;
 pub mod terminal;
 
 use crate::theme::ForgeTheme;

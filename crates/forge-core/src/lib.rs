@@ -4,9 +4,12 @@
 
 pub mod commands;
 pub mod dock;
+pub mod dotenv;
 pub mod fuzzy;
 pub mod keybindings;
 pub mod names;
+pub mod output;
 pub mod project_state;
+pub mod run_config;
 pub mod settings;
 pub mod tabs;

@@ -7,6 +7,7 @@ mod chrome;
 mod commands;
 mod dock;
 mod editors;
+mod run;
 
 use crate::app_state::{self, AppState};
 use crate::document::{Document, DocumentEvent};
@@ -14,6 +15,7 @@ use crate::editor::{EditorEvent, EditorView};
 use crate::find_bar::{FindBar, FindOption};
 use crate::palette::{Choice, CommandItem, Palette, PaletteEvent};
 use crate::panels::files::{FileTree, FileTreeEvent};
+use crate::panels::output::OutputPanel;
 use crate::panels::terminal::TerminalPanel;
 use crate::panels::{self, Placeholder};
 use crate::settings_view::{project_note, SettingsEvent, SettingsView};
@@ -91,6 +93,8 @@ pub struct Workspace {
     pub(crate) find_bar: Entity<FindBar>,
     pub(crate) settings_view: Entity<SettingsView>,
     pub(crate) terminal: Entity<TerminalPanel>,
+    pub(crate) output: Entity<OutputPanel>,
+    pub(crate) run: run::RunState,
     /// The open project's overrides (`.forge/settings.json`).
     pub(crate) project_settings: ProjectSettings,
     project_settings_path: Option<PathBuf>,
@@ -146,6 +150,7 @@ impl Workspace {
         let find_bar = cx.new(|cx| FindBar::new(window, cx));
         let settings_view = cx.new(|cx| SettingsView::new(window, cx));
         let terminal = cx.new(TerminalPanel::new);
+        let output = cx.new(|cx| OutputPanel::new(window, cx));
         let mut subs = Vec::new();
         for (i, ed) in editors.iter().enumerate() {
             subs.push(cx.subscribe_in(ed, window, move |this, _, event: &EditorEvent, window, cx| {
@@ -153,6 +158,7 @@ impl Workspace {
             }));
         }
         subs.push(cx.subscribe_in(&file_tree, window, Self::on_tree_event));
+        subs.push(cx.subscribe_in(&output, window, Self::on_output_event));
         subs.push(cx.subscribe_in(&settings_view, window, |this, _, event: &SettingsEvent, window, cx| match event {
             SettingsEvent::Changed => this.apply_settings(cx),
             SettingsEvent::Command(id) => this.run_command(id, window, cx),
@@ -198,6 +204,8 @@ impl Workspace {
             find_bar,
             settings_view,
             terminal,
+            output,
+            run: run::RunState::default(),
             project_settings: ProjectSettings::default(),
             project_settings_path: None,
             note: None,
@@ -295,6 +303,10 @@ impl Workspace {
             cx.notify();
         });
         let shell = s.shell.clone();
+        self.output.update(cx, |o, cx| {
+            o.font_size = s.font_size as f32 - 1.0;
+            cx.notify();
+        });
         self.terminal.update(cx, |t, cx| {
             t.font_size = s.font_size as f32;
             t.default_shell = shell;
@@ -527,6 +539,9 @@ impl Workspace {
         let _ = app_state::state(cx).user.add_recent(&path_str);
         self.root = Some(folder.clone());
         self.load_project_settings(&folder, window, cx);
+        self.run.config = None;
+        self.run.last_task = None;
+        self.load_run_file(&folder, window, cx);
         self.file_tree.update(cx, |t, cx| t.set_root(Some(folder.clone()), cx));
         self.terminal.update(cx, |t, cx| t.move_idle_to(Some(folder.clone()), cx));
         self.refresh_recent(cx);
@@ -594,6 +609,9 @@ impl Workspace {
             }
         }
         self.tasks.switch_to(&state.task);
+        if state.run_config.as_ref().is_some_and(|c| self.run.file.configurations.iter().any(|x| &x.name == c)) {
+            self.run.config = state.run_config.clone();
+        }
         self.terminal.update(cx, |t, _| t.set_pending(state.terminals.clone()));
         self.restoring = false;
         self.after_tabs_changed(window, cx);
@@ -849,6 +867,11 @@ impl Workspace {
                 self.load_project_settings(&root, window, cx);
             }
         }
+        if let (Some(p), Some(root)) = (self.run.file_path.clone(), self.root.clone()) {
+            if same_path(path, &p.to_string_lossy()) {
+                self.load_run_file(&root, window, cx);
+            }
+        }
         let st = app_state::state(cx);
         if same_path(path, &st.user.keybindings_path().to_string_lossy()) {
             let (overrides, err) = st.user.keybindings();
@@ -1050,6 +1073,7 @@ impl Workspace {
             active_group: self.tabs.active_group,
             task: self.tasks.current().to_owned(),
             terminals: self.terminal.read(cx).shell_ids(),
+            run_config: self.run.config.clone(),
             ..Default::default()
         }
     }
@@ -1164,6 +1188,9 @@ impl Workspace {
     pub(crate) fn panel_view(&mut self, id: &'static str, cx: &mut Context<Self>) -> AnyView {
         if id == "files" {
             return self.file_tree.clone().into();
+        }
+        if id == "output" {
+            return self.output.clone().into();
         }
         if id == "terminal" {
             // The first time it shows, its terminals start.

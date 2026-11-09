@@ -1,3 +1,8 @@
-//! forge-run: see docs/PLAN.md.
+//! forge-run: running Python for the project: finding an interpreter, the
+//! environment (with `.env`), and running programs with live output.
 
-pub fn placeholder() {}
+pub mod env;
+pub mod python;
+pub mod runner;
+
+pub use runner::{PythonRun, RunEvent, RunSpec};

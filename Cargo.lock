@@ -1915,6 +1915,7 @@ name = "forge-app"
 version = "1.0.0-dev"
 dependencies = [
  "forge-core",
+ "forge-run",
  "forge-sys",
  "forge-term",
  "forge-text",
@@ -1946,6 +1947,10 @@ version = "1.0.0-dev"
 [[package]]
 name = "forge-run"
 version = "1.0.0-dev"
+dependencies = [
+ "forge-core",
+ "tempfile",
+]
 
 [[package]]
 name = "forge-scan"

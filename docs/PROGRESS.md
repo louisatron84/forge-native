@@ -33,7 +33,7 @@ with the same text, and the old source and tests. This ledger is how work resume
 - [x] T2-01 Tabs for several open files
 - [x] T2-02 Python syntax highlighting (own tokenizer, v0.5)
 - [x] T2-03 Find/replace in the file (case, whole word, regex with $1 groups, v0.7)
-- [ ] T2-04 Run the current Python file and show its output in a panel (F5, auto-save, venv detection, `input()`, clickable tracebacks, v0.8)
+- [x] T2-04 Run the current Python file and show its output in a panel (F5, auto-save, venv detection, `input()`, clickable tracebacks, v0.8)
 - [x] T2-05 Integrated terminal (xterm.js + node-pty, Ctrl+`, v0.9)
 - [x] T2-06 Command palette (Ctrl+Shift+P), quick open (Ctrl+P), go to line (Ctrl+G)
 - [x] T2-07 Settings (font size, theme, tab width, Python interpreter, Ctrl+= / Ctrl+-)
@@ -43,8 +43,8 @@ with the same text, and the old source and tests. This ledger is how work resume
 - [x] T2-11 Recent projects
 - [x] T2-12 Workspace persistence (restore tabs, terminal sessions and layout)
 - [x] T2-13 Project-specific settings
-- [ ] T2-14 Task runner for predefined project commands
-- [ ] T2-15 Run configurations (arguments, environment variables and working directory)
+- [x] T2-14 Task runner for predefined project commands
+- [x] T2-15 Run configurations (arguments, environment variables and working directory)
 - [ ] T2-16 Python environment management (create, select and manage virtual environments)
 - [ ] T2-17 Dependency management integration (pip, requirements.txt, pyproject.toml)
 - [ ] T2-18 Updates

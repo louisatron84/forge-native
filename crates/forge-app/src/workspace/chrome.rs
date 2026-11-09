@@ -52,6 +52,7 @@ impl Workspace {
                 .child(task_name(task))
         });
         let folder = self.root.as_ref().map(|r| r.to_string_lossy().into_owned());
+        let busy = self.is_running(cx);
         div()
             .flex()
             .flex_none()
@@ -90,8 +91,11 @@ impl Workspace {
                     .tooltip(|window, cx| {
                         gpui_kit::component::tooltip::Tooltip::new("Run (F5 / Ctrl+F5)").build(window, cx)
                     })
-                    .on_click(cx.listener(|this, _, window, cx| this.run_command("run.smart", window, cx)))
-                    .child("▶ Run"),
+                    .when(busy, |d| d.bg(t.err))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.run_command(if busy { "run.stop" } else { "run.smart" }, window, cx)
+                    }))
+                    .child(if busy { "■ Stop" } else { "▶ Run" }),
             )
     }
 
@@ -151,6 +155,21 @@ impl Workspace {
             .border_color(t.border)
             .text_color(t.fg_muted)
             .text_size(px(12.0))
+            .when(self.root.is_some(), |d| {
+                let label = format!("▶ {}", self.run.config.clone().unwrap_or_else(|| "Current file".into()));
+                d.child(
+                    div()
+                        .id("sb-run")
+                        .px(px(7.0))
+                        .py(px(2.0))
+                        .rounded(px(2.0))
+                        .whitespace_nowrap()
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.bg_hover).text_color(t.fg))
+                        .on_click(cx.listener(|this, _, window, cx| this.run_command("run.selectConfig", window, cx)))
+                        .child(label),
+                )
+            })
             .child(div().flex_1())
             .when_some(self.note.clone(), |d, note| {
                 d.child(div().px(px(7.0)).min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().child(note))
