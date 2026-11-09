@@ -2,6 +2,7 @@
 //! and a stand-in for panels not ported to the native app yet.
 
 pub mod files;
+pub mod terminal;
 
 use crate::theme::ForgeTheme;
 use gpui_kit::{div, px, Context, IntoElement, ParentElement, Render, SharedString, Styled, Window};

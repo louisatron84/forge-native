@@ -34,14 +34,14 @@ with the same text, and the old source and tests. This ledger is how work resume
 - [x] T2-02 Python syntax highlighting (own tokenizer, v0.5)
 - [x] T2-03 Find/replace in the file (case, whole word, regex with $1 groups, v0.7)
 - [ ] T2-04 Run the current Python file and show its output in a panel (F5, auto-save, venv detection, `input()`, clickable tracebacks, v0.8)
-- [ ] T2-05 Integrated terminal (xterm.js + node-pty, Ctrl+`, v0.9)
+- [x] T2-05 Integrated terminal (xterm.js + node-pty, Ctrl+`, v0.9)
 - [x] T2-06 Command palette (Ctrl+Shift+P), quick open (Ctrl+P), go to line (Ctrl+G)
 - [x] T2-07 Settings (font size, theme, tab width, Python interpreter, Ctrl+= / Ctrl+-)
-- [ ] T2-08 Multiple terminal sessions
-- [ ] T2-09 Terminal profiles and shell selection
+- [x] T2-08 Multiple terminal sessions
+- [x] T2-09 Terminal profiles and shell selection
 - [x] T2-10 Configurable keyboard shortcuts
 - [x] T2-11 Recent projects
-- [ ] T2-12 Workspace persistence (restore tabs, terminal sessions and layout)
+- [x] T2-12 Workspace persistence (restore tabs, terminal sessions and layout)
 - [x] T2-13 Project-specific settings
 - [ ] T2-14 Task runner for predefined project commands
 - [ ] T2-15 Run configurations (arguments, environment variables and working directory)
@@ -187,3 +187,4 @@ with the same text, and the old source and tests. This ledger is how work resume
 - 2026-11-08: ledger created from the old checklist (163 items).
 - 2026-11-09: editor view (GPUI) on forge-text: T1-03, T1-04, T1-05, T1-06, T1-07, T1-09, T1-10, T1-11, T1-12, T1-13, T1-14, T1-15, T1-16, T2-02. 159 model tests + 13 headless view tests. Empty window 75 MB (debug).
 - 2026-11-09: workspace shell: dock with the four tasks (layouts.json), tabs and split groups, file tree (create/rename/delete), palette (commands, files, line, choices, shortcut capture), Keyboard Shortcuts, Welcome page, status bar, save/close warnings, encodings, line endings, large/binary files, crash backups, workspace state. T1-01, T1-02, T1-08, T1-17..T1-21, T2-01, T2-06, T2-10, T2-11. Window with a project 77 MB (debug).
+- 2026-11-09: find/replace bar, Settings dialog and project settings, integrated terminal (alacritty_terminal on ConPTY/pty: several terminals, shells, copy/paste, selection, history, restored per project). T2-03, T2-05, T2-07, T2-08, T2-09, T2-12, T2-13. Window with a project and a shell 129 MB (debug).

@@ -14,6 +14,7 @@ use crate::editor::{EditorEvent, EditorView};
 use crate::find_bar::{FindBar, FindOption};
 use crate::palette::{Choice, CommandItem, Palette, PaletteEvent};
 use crate::panels::files::{FileTree, FileTreeEvent};
+use crate::panels::terminal::TerminalPanel;
 use crate::panels::{self, Placeholder};
 use crate::settings_view::{project_note, SettingsEvent, SettingsView};
 use forge_core::commands::key_string;
@@ -35,6 +36,35 @@ use gpui_kit::{
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+/// Shortcuts that work while the terminal has focus (the shell never sees these keys).
+const TERMINAL_PASSTHROUGH: [&str; 25] = [
+    "task.code",
+    "task.connect",
+    "task.debug",
+    "task.run",
+    "view.projectGraph",
+    "nav.projectMap",
+    "file.openFolder",
+    "file.openRecent",
+    "palette.files",
+    "debug.start",
+    "terminal.new",
+    "terminal.toggle",
+    "panel.toggle",
+    "palette.commands",
+    "tab.next",
+    "tab.prev",
+    "run.smart",
+    "run.stop",
+    "run.file",
+    "settings.open",
+    "debug.restart",
+    "debug.toggleBreakpoint",
+    "debug.stepOver",
+    "debug.stepInto",
+    "debug.stepOut",
+];
 
 /// Commands that still work while the palette is open (they switch its mode).
 const PALETTE_TOGGLES: [&str; 3] = ["palette.commands", "palette.files", "palette.line"];
@@ -60,6 +90,7 @@ pub struct Workspace {
     pub(crate) palette: Entity<Palette>,
     pub(crate) find_bar: Entity<FindBar>,
     pub(crate) settings_view: Entity<SettingsView>,
+    pub(crate) terminal: Entity<TerminalPanel>,
     /// The open project's overrides (`.forge/settings.json`).
     pub(crate) project_settings: ProjectSettings,
     project_settings_path: Option<PathBuf>,
@@ -114,6 +145,7 @@ impl Workspace {
         let palette = cx.new(|cx| Palette::new(window, cx));
         let find_bar = cx.new(|cx| FindBar::new(window, cx));
         let settings_view = cx.new(|cx| SettingsView::new(window, cx));
+        let terminal = cx.new(TerminalPanel::new);
         let mut subs = Vec::new();
         for (i, ed) in editors.iter().enumerate() {
             subs.push(cx.subscribe_in(ed, window, move |this, _, event: &EditorEvent, window, cx| {
@@ -165,6 +197,7 @@ impl Workspace {
             palette,
             find_bar,
             settings_view,
+            terminal,
             project_settings: ProjectSettings::default(),
             project_settings_path: None,
             note: None,
@@ -261,6 +294,12 @@ impl Workspace {
             v.shell_name = shell_name;
             cx.notify();
         });
+        let shell = s.shell.clone();
+        self.terminal.update(cx, |t, cx| {
+            t.font_size = s.font_size as f32;
+            t.default_shell = shell;
+            cx.notify();
+        });
         for ed in &self.editors {
             ed.update(cx, |e, cx| {
                 e.font_size = s.font_size as f32;
@@ -326,6 +365,10 @@ impl Workspace {
         let keymap = app_state::state(cx).keymap.clone();
         let Some(command) = keymap.command_for_key(&key, |id| self.available(id, window, cx)) else { return };
         if palette_open && !PALETTE_TOGGLES.contains(&command.id) {
+            return;
+        }
+        // A focused terminal gets every key except the shortcuts that make sense from there.
+        if self.terminal.read(cx).has_focus(window) && !TERMINAL_PASSTHROUGH.contains(&command.id) {
             return;
         }
         cx.stop_propagation();
@@ -485,6 +528,7 @@ impl Workspace {
         self.root = Some(folder.clone());
         self.load_project_settings(&folder, window, cx);
         self.file_tree.update(cx, |t, cx| t.set_root(Some(folder.clone()), cx));
+        self.terminal.update(cx, |t, cx| t.move_idle_to(Some(folder.clone()), cx));
         self.refresh_recent(cx);
         self.restore_layout(&path_str, window, cx);
         self.offer_restore(&path_str, window, cx);
@@ -550,6 +594,7 @@ impl Workspace {
             }
         }
         self.tasks.switch_to(&state.task);
+        self.terminal.update(cx, |t, _| t.set_pending(state.terminals.clone()));
         self.restoring = false;
         self.after_tabs_changed(window, cx);
     }
@@ -1004,6 +1049,7 @@ impl Workspace {
             groups,
             active_group: self.tabs.active_group,
             task: self.tasks.current().to_owned(),
+            terminals: self.terminal.read(cx).shell_ids(),
             ..Default::default()
         }
     }
@@ -1118,6 +1164,11 @@ impl Workspace {
     pub(crate) fn panel_view(&mut self, id: &'static str, cx: &mut Context<Self>) -> AnyView {
         if id == "files" {
             return self.file_tree.clone().into();
+        }
+        if id == "terminal" {
+            // The first time it shows, its terminals start.
+            self.terminal.update(cx, |t, cx| t.ensure_started(cx));
+            return self.terminal.clone().into();
         }
         self.panels
             .entry(id)

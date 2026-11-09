@@ -225,7 +225,9 @@ impl Workspace {
             .border_b_1()
             .border_color(t.border)
             .child(div().flex().gap(px(2.0)).min_w_0().overflow_hidden().children(tabs))
-            .child(div().flex_1().flex().justify_end().min_w_0());
+            .child(div().flex_1().flex().justify_end().min_w_0().when(active == "terminal" && !collapsed, |d| {
+                d.child(crate::panels::terminal::actions(&self.terminal, &t))
+            }));
         let body = (!collapsed).then(|| {
             let content = if active == "editor" {
                 self.render_editor_area(window, cx)

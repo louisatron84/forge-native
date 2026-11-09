@@ -102,9 +102,10 @@ impl Workspace {
             | "git.push"
             | "git.fetch"
             | "git.stageAll"
-            | "tests.stop"
-            | "terminal.kill"
-            | "terminal.next" => false,
+            | "tests.stop" => false,
+            "terminal.kill" | "terminal.next" => {
+                self.tasks.is_shown("terminal") && self.terminal.read(cx).session_count() > 0
+            }
             "git.diffFile" => has_doc && has_folder,
             "run.smart" | "run.file" | "run.memory" | "debug.start" => has_doc || has_folder,
             _ => true,
@@ -309,7 +310,46 @@ impl Workspace {
             "view.projectGraph" => self.reveal_panel("graph", cx),
             "view.pipeline" => self.reveal_panel("pipeline", cx),
             "view.database" => self.reveal_panel("database", cx),
-            "terminal.toggle" => self.reveal_panel("terminal", cx),
+            "terminal.toggle" => {
+                if self.tasks.is_shown("terminal") && self.terminal.read(cx).has_focus(window) {
+                    self.tasks.hide("terminal");
+                    self.layouts_changed(cx);
+                    self.focus_editor(window, cx);
+                } else {
+                    self.reveal_panel("terminal", cx);
+                    self.terminal.update(cx, |t, cx| t.shown(window, cx));
+                }
+            }
+            "terminal.new" => {
+                self.reveal_panel("terminal", cx);
+                self.terminal.update(cx, |t, cx| {
+                    t.ensure_started(cx);
+                    if t.session_count() > 0 {
+                        t.new_terminal(None, None, None, None, cx);
+                    }
+                    t.focus(window, cx);
+                });
+            }
+            "terminal.newWithShell" => {
+                let choices = forge_term::shells::installed_shells()
+                    .into_iter()
+                    .map(|p| {
+                        let file = p.file.clone();
+                        Choice::new(p.name.clone(), move |ws, window, cx| {
+                            ws.reveal_panel("terminal", cx);
+                            let profile = p.clone();
+                            ws.terminal.update(cx, |t, cx| {
+                                t.new_terminal(Some(profile), None, None, None, cx);
+                                t.focus(window, cx);
+                            });
+                        })
+                        .detail(file)
+                    })
+                    .collect();
+                self.choose("New terminal with which shell?", choices, window, cx);
+            }
+            "terminal.kill" => self.terminal.update(cx, |t, cx| t.kill_active(cx)),
+            "terminal.next" => self.terminal.update(cx, |t, cx| t.next(cx)),
 
             // ---------- settings and look ----------
             "view.zoomIn" | "view.zoomOut" => {
