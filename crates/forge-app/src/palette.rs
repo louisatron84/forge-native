@@ -23,6 +23,8 @@ use std::rc::Rc;
 pub type Action = Rc<dyn Fn(&mut Workspace, &mut Window, &mut Context<Workspace>)>;
 /// What to do with typed text (prompt mode) or a pressed shortcut (capture mode).
 pub type TextAction = Rc<dyn Fn(&mut Workspace, String, &mut Window, &mut Context<Workspace>)>;
+/// Search mode: look for (query, generation); the workspace answers with `set_search_results`.
+pub type SearchAction = Rc<dyn Fn(&mut Workspace, String, u64, &mut Window, &mut Context<Workspace>)>;
 
 const MAX_ITEMS: usize = 60;
 
@@ -67,6 +69,7 @@ enum Mode {
     Choose { prompt: SharedString, choices: Vec<Choice> },
     Prompt { prompt: SharedString, verb: SharedString, submit: TextAction },
     Capture { prompt: SharedString, on_key: TextAction },
+    Search { prompt: SharedString, provider: SearchAction },
 }
 
 struct Item {
@@ -102,6 +105,8 @@ pub struct Palette {
     line_count: Option<usize>,
     scroll: ScrollHandle,
     return_focus: Option<FocusHandle>,
+    search_generation: u64,
+    search_task: Option<gpui_kit::Task<()>>,
     _sub: Subscription,
 }
 
@@ -124,6 +129,8 @@ impl Palette {
             line_count: None,
             scroll: ScrollHandle::new(),
             return_focus: None,
+            search_generation: 0,
+            search_task: None,
             _sub: sub,
         }
     }
@@ -197,6 +204,40 @@ impl Palette {
     ) {
         self.mode = Mode::Prompt { prompt: prompt.into(), verb: verb.into(), submit: Rc::new(submit) };
         self.show(initial, window, cx);
+    }
+
+    /// Choices that come from a search as you type (e.g. symbols across the
+    /// project): the workspace searches, then calls `set_search_results`.
+    pub fn search(
+        &mut self,
+        prompt: impl Into<SharedString>,
+        initial: &str,
+        provider: impl Fn(&mut Workspace, String, u64, &mut Window, &mut Context<Workspace>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.mode = Mode::Search { prompt: prompt.into(), provider: Rc::new(provider) };
+        self.show(initial, window, cx);
+        self.input.update(cx, |s, cx| s.select_all(window, cx));
+    }
+
+    /// The results of search number `generation` (a later search drops them).
+    pub fn set_search_results(&mut self, generation: u64, choices: Vec<Choice>, empty: &str, cx: &mut Context<Self>) {
+        if !self.open || !matches!(self.mode, Mode::Search { .. }) || generation != self.search_generation {
+            return;
+        }
+        self.items = if choices.is_empty() {
+            vec![Item::note(empty.to_owned())]
+        } else {
+            choices
+                .into_iter()
+                .take(MAX_ITEMS)
+                .map(|c| Item { label: c.label, positions: Vec::new(), detail: c.detail, hint: c.hint, run: Some(c.run) })
+                .collect()
+        };
+        self.selected = 0;
+        self.scroll.scroll_to_item(0);
+        cx.notify();
     }
 
     /// Wait for a shortcut to be pressed; Escape cancels.
@@ -291,7 +332,34 @@ impl Palette {
     fn update(&mut self, cx: &mut Context<Self>) {
         let value = self.input.read(cx).value().to_string();
         let query = value.trim();
+        if let Mode::Search { provider, .. } = &self.mode {
+            // Ask a moment after typing stops; only the latest search's results show.
+            let provider = provider.clone();
+            self.search_generation += 1;
+            let generation = self.search_generation;
+            self.search_task = None;
+            self.items = if query.is_empty() {
+                vec![Item::note("Type a name to search for")]
+            } else {
+                let q = query.to_owned();
+                self.search_task = Some(cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(std::time::Duration::from_millis(180)).await;
+                    this.update(cx, |p, cx| {
+                        if p.open && p.search_generation == generation {
+                            cx.emit(PaletteEvent::Run(Rc::new(move |ws, w, cx| provider(ws, q.clone(), generation, w, cx))));
+                        }
+                    })
+                    .ok();
+                }));
+                vec![Item::note("Searching…")]
+            };
+            self.selected = 0;
+            self.scroll.scroll_to_item(0);
+            cx.notify();
+            return;
+        }
         self.items = match &self.mode {
+            Mode::Search { .. } => Vec::new(),
             Mode::Capture { .. } => vec![Item::note("Press the new shortcut now (Escape cancels)")],
             Mode::Prompt { verb, submit, .. } => {
                 if query.is_empty() {
@@ -394,7 +462,10 @@ impl Palette {
     fn placeholder(&self) -> SharedString {
         match &self.mode {
             Mode::Quick => "Search files by name (type > for commands, : for a line number)".into(),
-            Mode::Choose { prompt, .. } | Mode::Prompt { prompt, .. } | Mode::Capture { prompt, .. } => prompt.clone(),
+            Mode::Choose { prompt, .. }
+            | Mode::Prompt { prompt, .. }
+            | Mode::Capture { prompt, .. }
+            | Mode::Search { prompt, .. } => prompt.clone(),
         }
     }
 }
@@ -488,13 +559,16 @@ impl Render for Palette {
                     )
                 })
         });
-        let empty = self.items.is_empty().then(|| {
-            div().px(px(12.0)).py(px(10.0)).text_color(t.fg_muted).child(if quick_commands {
-                "No matching commands"
-            } else {
-                "No matching files"
-            })
-        });
+        let empty_text = match &self.mode {
+            Mode::Quick if quick_commands => Some("No matching commands"),
+            Mode::Quick => Some("No matching files"),
+            // An empty list of choices: the prompt says why.
+            Mode::Choose { choices, .. } if !choices.is_empty() => Some("Nothing matches"),
+            _ => None,
+        };
+        let empty = empty_text
+            .filter(|_| self.items.is_empty())
+            .map(|text| div().px(px(12.0)).py(px(10.0)).text_color(t.fg_muted).child(text));
         div()
             .id("palette-overlay")
             .absolute()

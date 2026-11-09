@@ -2,7 +2,9 @@
 //! and a stand-in for panels not ported to the native app yet.
 
 pub mod files;
+pub mod lsp_views;
 pub mod output;
+pub mod problems;
 pub mod search;
 pub mod terminal;
 pub mod tests;

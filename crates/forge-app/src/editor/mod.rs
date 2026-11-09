@@ -164,6 +164,10 @@ pub enum EditorEvent {
     GutterClick(usize),
     /// The editor got keyboard focus.
     Focused,
+    /// The mouse rested over this position (window coordinates of the mouse): show a hover.
+    Hover(Pos, gpui_kit::Point<Pixels>),
+    /// The mouse moved off what was hovered.
+    HoverEnd,
 }
 
 impl EventEmitter<EditorEvent> for EditorView {}
@@ -212,6 +216,23 @@ pub struct EditorView {
     pub(crate) layout: Option<LayoutCache>,
     /// Find matches to highlight (sorted by position).
     pub(crate) matches: std::sync::Arc<Vec<forge_text::find::Match>>,
+    /// Problems in the shown document (from the language server and Ruff).
+    pub(crate) diagnostics: std::sync::Arc<Vec<EditorDiagnostic>>,
+    /// Other uses of the name under the cursor: (start, end, is it written to).
+    pub(crate) occurrences: std::sync::Arc<Vec<(Pos, Pos, bool)>>,
+    hover_pos: Option<Pos>,
+    hover_shown: bool,
+    hover_task: Option<gpui_kit::Task<()>>,
+}
+
+/// A problem shown in the text: where (character columns), how bad, what.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EditorDiagnostic {
+    pub start: Pos,
+    pub end: Pos,
+    /// 1 error, 2 warning, 3 information, 4 hint.
+    pub severity: u8,
+    pub message: String,
 }
 
 impl Focusable for EditorView {
@@ -240,6 +261,11 @@ impl EditorView {
             autoscroll: None,
             layout: None,
             matches: std::sync::Arc::new(Vec::new()),
+            diagnostics: std::sync::Arc::new(Vec::new()),
+            occurrences: std::sync::Arc::new(Vec::new()),
+            hover_pos: None,
+            hover_shown: false,
+            hover_task: None,
         }
     }
 
@@ -428,10 +454,31 @@ impl EditorView {
         });
     }
 
+    /// Where a position is on screen (after the last draw), for popups.
+    pub fn screen_bounds(&self, p: Pos) -> Option<gpui_kit::Bounds<Pixels>> {
+        self.layout.as_ref()?.bounds_for_cols(p.line, p.col, p.col + 1)
+    }
+
+    /// Show these problems in the text (wavy underlines).
+    pub fn set_diagnostics(&mut self, list: Vec<EditorDiagnostic>, cx: &mut Context<Self>) {
+        if *self.diagnostics != list {
+            self.diagnostics = std::sync::Arc::new(list);
+            cx.notify();
+        }
+    }
+
     /// Highlight these ranges (find matches); empty to clear.
     pub fn set_matches(&mut self, matches: Vec<forge_text::find::Match>, cx: &mut Context<Self>) {
         self.matches = std::sync::Arc::new(matches);
         cx.notify();
+    }
+
+    /// Highlight the other uses of the name under the cursor; empty to clear.
+    pub fn set_occurrences(&mut self, list: Vec<(Pos, Pos, bool)>, cx: &mut Context<Self>) {
+        if *self.occurrences != list {
+            self.occurrences = std::sync::Arc::new(list);
+            cx.notify();
+        }
     }
 
     /// Run an edit with one cursor as one undo step; `op` returns (cursor, anchor).
@@ -1149,6 +1196,9 @@ impl EditorView {
         if event.pressed_button != Some(MouseButton::Left) {
             self.selecting = false;
             self.dragging_minimap = false;
+            if event.pressed_button.is_none() {
+                self.track_hover(event.position, cx);
+            }
             return;
         }
         if self.dragging_minimap {
@@ -1168,6 +1218,33 @@ impl EditorView {
             cx.emit(EditorEvent::CursorMoved);
             cx.notify();
         }
+    }
+
+    /// After the mouse rests over a name for a moment, ask for a hover.
+    fn track_hover(&mut self, at: gpui_kit::Point<Pixels>, cx: &mut Context<Self>) {
+        let (Some(layout), Some(document)) = (self.layout.clone(), self.document.clone()) else { return };
+        let hit = layout.hit_test(at, &document.read(cx).doc.buffer, self.tab_size);
+        let pos = (!hit.in_gutter && !layout.in_minimap(at)).then_some(hit.pos);
+        if pos == self.hover_pos {
+            return;
+        }
+        if self.hover_shown {
+            self.hover_shown = false;
+            cx.emit(EditorEvent::HoverEnd);
+        }
+        self.hover_pos = pos;
+        self.hover_task = pos.map(|p| {
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(std::time::Duration::from_millis(450)).await;
+                this.update(cx, |e, cx| {
+                    if e.hover_pos == Some(p) {
+                        e.hover_shown = true;
+                        cx.emit(EditorEvent::Hover(p, at));
+                    }
+                })
+                .ok();
+            })
+        });
     }
 
     fn on_mouse_up(&mut self, _: &MouseUpEvent, _window: &mut Window, _cx: &mut Context<Self>) {

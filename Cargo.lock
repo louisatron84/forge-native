@@ -1915,6 +1915,7 @@ name = "forge-app"
 version = "1.0.0-dev"
 dependencies = [
  "forge-core",
+ "forge-lsp",
  "forge-run",
  "forge-sys",
  "forge-term",

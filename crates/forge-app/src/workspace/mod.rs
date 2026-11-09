@@ -3,10 +3,13 @@
 //! and the commands every shortcut and menu runs. Replaces the shell parts of
 //! `src/renderer/main.ts` and `src/renderer/workspace.ts`.
 
+mod assist;
 mod chrome;
 mod commands;
 mod dock;
 mod editors;
+mod lsp;
+mod nav;
 mod pyenv;
 mod run;
 
@@ -15,8 +18,10 @@ use crate::document::{Document, DocumentEvent};
 use crate::editor::{EditorEvent, EditorView};
 use crate::find_bar::{FindBar, FindOption};
 use crate::palette::{Choice, CommandItem, Palette, PaletteEvent};
+use crate::panels::lsp_views::{CallsPanel, OpenAt, OutlinePanel, ReferencesPanel};
 use crate::panels::files::{FileTree, FileTreeEvent};
 use crate::panels::output::OutputPanel;
+use crate::panels::problems::{ProblemsEvent, ProblemsPanel};
 use crate::panels::search::{SearchEvent, SearchPanel};
 use crate::panels::terminal::TerminalPanel;
 use crate::panels::tests::{TestsEvent, TestsPanel, Which};
@@ -99,6 +104,23 @@ pub struct Workspace {
     pub(crate) output: Entity<OutputPanel>,
     pub(crate) tests: Entity<TestsPanel>,
     pub(crate) search: Entity<SearchPanel>,
+    pub(crate) problems: Entity<ProblemsPanel>,
+    pub(crate) references: Entity<ReferencesPanel>,
+    pub(crate) outline: Entity<OutlinePanel>,
+    pub(crate) calls: Entity<CallsPanel>,
+    /// The file the Outline shows (None: ask again when it's next shown).
+    pub(crate) outline_for: Option<String>,
+    pub(crate) outline_task: Option<gpui_kit::Task<()>>,
+    /// What the highlighted uses of the name under the cursor are for.
+    pub(crate) occurrence_key: String,
+    pub(crate) occurrence_task: Option<gpui_kit::Task<()>>,
+    pub(crate) lsp: lsp::LspState,
+    pub(crate) completion: assist::CompletionState,
+    pub(crate) hover: assist::HoverState,
+    /// Where Go Back returns to.
+    pub(crate) nav_back: Vec<(PathBuf, Pos)>,
+    /// Problems from other tools (Ruff), per file.
+    pub(crate) external_diagnostics: Vec<(String, Vec<forge_lsp::server::Diagnostic>)>,
     pub(crate) run: run::RunState,
     pub(crate) pyenv: pyenv::PyEnvState,
     /// The interpreter setting last applied (a change re-checks the environment).
@@ -161,6 +183,10 @@ impl Workspace {
         let output = cx.new(|cx| OutputPanel::new(window, cx));
         let tests = cx.new(TestsPanel::new);
         let search = cx.new(|cx| SearchPanel::new(window, cx));
+        let problems = cx.new(|_| ProblemsPanel::new());
+        let references = cx.new(|_| ReferencesPanel::new());
+        let outline = cx.new(|_| OutlinePanel::new());
+        let calls = cx.new(|_| CallsPanel::new());
         let mut subs = Vec::new();
         for (i, ed) in editors.iter().enumerate() {
             subs.push(cx.subscribe_in(ed, window, move |this, _, event: &EditorEvent, window, cx| {
@@ -169,6 +195,12 @@ impl Workspace {
         }
         subs.push(cx.subscribe_in(&file_tree, window, Self::on_tree_event));
         subs.push(cx.subscribe_in(&output, window, Self::on_output_event));
+        subs.push(cx.subscribe_in(&problems, window, |this, _, e: &ProblemsEvent, window, cx| match e {
+            ProblemsEvent::Open(path, line, col16) => this.open_at_lsp(path.clone(), *line, *col16, window, cx),
+        }));
+        subs.push(cx.subscribe_in(&references, window, |this, _, e: &OpenAt, window, cx| this.on_open_at(e, window, cx)));
+        subs.push(cx.subscribe_in(&outline, window, |this, _, e: &OpenAt, window, cx| this.on_open_at(e, window, cx)));
+        subs.push(cx.subscribe_in(&calls, window, |this, _, e: &OpenAt, window, cx| this.on_open_at(e, window, cx)));
         subs.push(cx.subscribe_in(&search, window, |this, _, e: &SearchEvent, window, cx| match e {
             SearchEvent::OpenMatch(path, line, col, len) => {
                 this.open_path(path.clone(), window, cx);
@@ -231,6 +263,19 @@ impl Workspace {
             output,
             tests,
             search,
+            problems,
+            references,
+            outline,
+            calls,
+            outline_for: None,
+            outline_task: None,
+            occurrence_key: String::new(),
+            occurrence_task: None,
+            lsp: lsp::LspState::default(),
+            completion: assist::CompletionState::default(),
+            hover: assist::HoverState::default(),
+            nav_back: Vec::new(),
+            external_diagnostics: Vec::new(),
             run: run::RunState::default(),
             pyenv: pyenv::PyEnvState::default(),
             python_path_seen: None,
@@ -382,6 +427,17 @@ impl Workspace {
         if key.is_empty() {
             return;
         }
+        self.hide_hover(cx);
+        let editor_focused = self.editors.iter().any(|e| e.focus_handle(cx).is_focused(window));
+        if editor_focused && self.completion_key(&key, window, cx) {
+            cx.stop_propagation();
+            return;
+        }
+        if editor_focused && key == "Ctrl+Space" {
+            self.request_completion(None, cx);
+            cx.stop_propagation();
+            return;
+        }
         // The Settings dialog handles its own keys; Escape closes it, Ctrl+, toggles it.
         if self.settings_view.read(cx).is_open() {
             if key == "Escape" {
@@ -454,16 +510,36 @@ impl Workspace {
                 }
             }
             EditorEvent::Edited => {
+                self.refilter_completion(cx);
+                if group == self.tabs.active_group {
+                    self.outline_edited(cx);
+                    self.update_occurrences(cx);
+                }
                 self.find_bar.update(cx, |f, cx| f.refresh(window, cx));
                 self.backup_soon(cx);
                 self.update_title(window, cx);
                 cx.notify();
             }
             EditorEvent::CursorMoved => {
+                self.refilter_completion(cx);
+                if group == self.tabs.active_group {
+                    self.update_occurrences(cx);
+                    if self.tasks.is_shown("outline") {
+                        self.highlight_outline(cx);
+                    }
+                }
                 self.save_state_soon(cx);
                 cx.notify();
             }
-            EditorEvent::Typed(_) | EditorEvent::CtrlClick(_) | EditorEvent::GutterClick(_) => {}
+            EditorEvent::Typed(text) => {
+                if group == self.tabs.active_group {
+                    self.completion_on_type(text, cx);
+                }
+            }
+            EditorEvent::CtrlClick(pos) => self.go_to_definition(Some(*pos), window, cx),
+            EditorEvent::Hover(pos, at) => self.show_hover(group, *pos, *at, cx),
+            EditorEvent::HoverEnd => self.hide_hover(cx),
+            EditorEvent::GutterClick(_) => {}
         }
     }
 
@@ -579,6 +655,8 @@ impl Workspace {
         }
         self.save_state_now(cx);
         self.close_all_docs(cx);
+        self.stop_language_server(cx);
+        self.external_diagnostics.clear();
         let path_str = folder.to_string_lossy().into_owned();
         match prepare_project_dir(&folder) {
             ProjectDirResult::Migrated => self.status_note("Moved project settings from .ideforfun/ to .forge/", cx),
@@ -765,7 +843,11 @@ impl Workspace {
     pub(crate) fn adopt_doc(&mut self, doc: Entity<Document>, cx: &mut Context<Self>) -> DocId {
         let id = self.next_doc;
         self.next_doc += 1;
-        let sub = cx.subscribe(&doc, |this, _, _: &DocumentEvent, cx| {
+        let sub = cx.subscribe(&doc, |this, doc, e: &DocumentEvent, cx| {
+            if let DocumentEvent::Edited { .. } = e {
+                let path = doc.read(cx).doc.path().to_owned();
+                this.lsp_doc_changed(&path, cx);
+            }
             this.backup_soon(cx);
             cx.notify();
         });
@@ -847,6 +929,11 @@ impl Workspace {
     /// Show each group's active file in its editor, and update everything that follows the active file.
     pub(crate) fn after_tabs_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_editors(window, cx);
+        self.lsp_sync(window, cx);
+        self.refresh_diagnostics(cx);
+        self.refresh_semantic_tokens(cx);
+        self.outline_file_changed(cx);
+        self.update_occurrences(cx);
         let active_editor = self.editors[self.tabs.active_group.min(1)].downgrade();
         self.find_bar.update(cx, |f, cx| {
             f.switch_editor(Some(active_editor), cx);
@@ -922,6 +1009,7 @@ impl Workspace {
 
     /// A file was saved: reload what it configures.
     fn after_save(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.lsp_did_save(path, cx);
         if let (Some(p), Some(root)) = (self.project_settings_path.clone(), self.root.clone()) {
             if same_path(path, &p.to_string_lossy()) {
                 self.load_project_settings(&root, window, cx);
@@ -1292,6 +1380,15 @@ impl Workspace {
         .detach();
     }
 
+    /// Open a file at a language server position (UTF-16 column).
+    pub(crate) fn open_at_lsp(&mut self, path: PathBuf, line: usize, col16: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_path(path, window, cx);
+        let ed = self.editors[self.tabs.active_group.min(1)].clone();
+        let col = ed.read(cx).document().map(|d| forge_text::chars::col_from_utf16(d.read(cx).doc.buffer.line(line), col16)).unwrap_or(col16);
+        ed.update(cx, |e, cx| e.go_to(line, col, cx));
+        window.focus(&ed.focus_handle(cx), cx);
+    }
+
     /// The view of a panel (created the first time it's shown).
     pub(crate) fn panel_view(&mut self, id: &'static str, cx: &mut Context<Self>) -> AnyView {
         if id == "files" {
@@ -1300,8 +1397,25 @@ impl Workspace {
         if id == "output" {
             return self.output.clone().into();
         }
+        if id == "problems" {
+            return self.problems.clone().into();
+        }
         if id == "search" {
             return self.search.clone().into();
+        }
+        if id == "references" {
+            return self.references.clone().into();
+        }
+        if id == "calls" {
+            return self.calls.clone().into();
+        }
+        if id == "outline" {
+            // Shown again after a change elsewhere: ask for the active file's symbols.
+            let active = self.active_doc().map(|d| d.read(cx).doc.path().to_owned()).unwrap_or_default();
+            if self.outline_for.as_deref() != Some(active.as_str()) {
+                self.refresh_outline(cx);
+            }
+            return self.outline.clone().into();
         }
         if id == "tests" {
             self.tests.update(cx, |t, cx| t.shown(cx));
@@ -1404,6 +1518,8 @@ impl Render for Workspace {
             .when(self.editing_layout, |d| d.child(self.render_edit_bar(cx)))
             .child(div().flex_1().min_h_0().flex().child(dock))
             .child(self.render_status_bar(window, cx))
+            .children(self.render_completion(&t, cx))
+            .children(self.render_hover(&t))
             .child(self.settings_view.clone())
             .child(self.palette.clone())
     }

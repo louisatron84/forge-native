@@ -56,16 +56,16 @@ with the same text, and the old source and tests. This ledger is how work resume
 - [x] T3-02 Search across the project (Ctrl+Shift+F, case / word / regex, v0.12)
 - [ ] T3-03 Git status in the file tree (M/U/A/D badges, folder dots, auto-refresh, v0.12)
 - [ ] T3-04 Debugger (DAP, debugpy): breakpoints, stepping, call stack, variables, debug console with expression evaluation, hover values, pause on uncaught exceptions
-- [ ] T3-05 Find references
-- [ ] T3-06 Rename symbol across project
-- [ ] T3-07 Go to implementation
-- [ ] T3-08 Call hierarchy
-- [ ] T3-09 Document symbols / outline panel
+- [x] T3-05 Find references
+- [x] T3-06 Rename symbol across project
+- [x] T3-07 Go to implementation
+- [x] T3-08 Call hierarchy
+- [x] T3-09 Document symbols / outline panel
 - [ ] T3-10 Import organisation and automatic import suggestions
 - [ ] T3-11 Code actions and quick fixes
 - [ ] T3-12 Format document / selection (Black, Ruff)
 - [ ] T3-13 Linting integration (Ruff)
-- [ ] T3-14 Semantic syntax highlighting (Pyright doesn't provide semantic tokens; needs basedpyright or our own analysis)
+- [x] T3-14 Semantic syntax highlighting (Pyright doesn't provide semantic tokens; needs basedpyright or our own analysis)
 - [ ] T3-15 Language-support architecture: language integrations instead of Python-specific editor logic, so several language servers can run side by side (groundwork for Tier 6.2)
 - [ ] T3-16 Git diff viewer
 - [ ] T3-17 Stage/unstage individual hunks
@@ -190,3 +190,4 @@ with the same text, and the old source and tests. This ledger is how work resume
 - 2026-11-09: find/replace bar, Settings dialog and project settings, integrated terminal (alacritty_terminal on ConPTY/pty: several terminals, shells, copy/paste, selection, history, restored per project). T2-03, T2-05, T2-07, T2-08, T2-09, T2-12, T2-13. Window with a project and a shell 129 MB (debug).
 - 2026-11-09: Run with the Output panel, run configurations and tasks, Python environments (interpreter picker, .venv, packages, missing dependencies). T2-04, T2-14, T2-15, T2-16, T2-17. forge-run crate (real-Python tests).
 - 2026-11-09: Tests panel (pytest via JUnit XML, unittest via -v output; run all / failed / file / at cursor; failures link to their line). T2-19. M2 done except T2-18 (updates: with M5's installer work).
+- 2026-11-09: language server in the editor (basedpyright, installed into Forge's tools venv when missing): diagnostics with squiggles and the Problems panel, completion (auto-imports apply their import), hover, go to definition / type definition and back, references, implementations (subclasses and overrides), rename across files, symbols in the file and the project (palette search mode), call hierarchy, Outline, semantic highlighting, highlighted uses of the name under the cursor; auto-restart. T3-05, T3-06, T3-07, T3-08, T3-09, T3-14.

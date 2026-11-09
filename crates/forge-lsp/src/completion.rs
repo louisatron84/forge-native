@@ -24,6 +24,21 @@ pub struct CompletionItem {
     pub raw: Value,
     /// Accepting it also adds an import (Pyright's auto-import suggestions).
     pub auto_import: bool,
+    /// Other edits made when it's accepted (the import line of an auto-import).
+    pub additional_edits: Vec<crate::navigation::TextEdit>,
+}
+
+/// An item's `additionalTextEdits`.
+pub fn additional_edits(raw: &Value) -> Vec<crate::navigation::TextEdit> {
+    raw.get("additionalTextEdits")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| {
+            let (start, end) = range(e.get("range"))?;
+            Some(crate::navigation::TextEdit { start, end, text: e.get("newText")?.as_str()?.to_owned() })
+        })
+        .collect()
 }
 
 /// LSP documentation is a string or { kind, value }.
@@ -57,6 +72,7 @@ pub fn to_completion_item(raw: &Value) -> CompletionItem {
         text_edit,
         raw: raw.clone(),
         auto_import,
+        additional_edits: additional_edits(raw),
     }
 }
 

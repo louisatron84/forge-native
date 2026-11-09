@@ -277,6 +277,18 @@ impl Workspace {
             }
             "tests.stop" => self.tests.update(cx, |t, _| t.stop()),
 
+            // ---------- language server ----------
+            "nav.definition" => self.go_to_definition(None, window, cx),
+            "nav.back" => self.go_back(window, cx),
+            "nav.references" => self.find_references(window, cx),
+            "nav.implementations" => self.find_implementations(false, window, cx),
+            "nav.typeDefinition" => self.go_to_type_definition(window, cx),
+            "nav.symbol" => self.go_to_symbol(window, cx),
+            "nav.projectSymbol" => self.go_to_project_symbol(window, cx),
+            "nav.callHierarchy" => self.show_call_hierarchy(window, cx),
+            "editor.renameSymbol" => self.rename_symbol(window, cx),
+            "python.restartServer" => self.restart_language_server(window, cx),
+
             // ---------- Python ----------
             "python.selectInterpreter" => self.pick_interpreter(window, cx),
             "python.createVenv" => self.create_venv(None, window, cx),

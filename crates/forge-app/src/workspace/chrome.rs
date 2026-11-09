@@ -155,6 +155,37 @@ impl Workspace {
             .border_color(t.border)
             .text_color(t.fg_muted)
             .text_size(px(12.0))
+            .when(self.root.is_some(), |d| {
+                let (errors, warnings) = self.lsp.counts;
+                d.child(
+                    div()
+                        .id("sb-problems")
+                        .flex()
+                        .gap(px(6.0))
+                        .px(px(7.0))
+                        .py(px(2.0))
+                        .rounded(px(2.0))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.bg_hover))
+                        .on_click(cx.listener(|this, _, window, cx| this.run_command("panel.problems", window, cx)))
+                        .child(div().when(errors > 0, |d| d.text_color(t.err)).child(format!("⊗ {errors}")))
+                        .child(div().when(warnings > 0, |d| d.text_color(t.warn)).child(format!("⚠ {warnings}"))),
+                )
+            })
+            .when(self.lsp.status == super::lsp::LspStatus::Missing && self.root.is_some(), |d| {
+                d.child(
+                    div()
+                        .id("sb-lsp-install")
+                        .px(px(7.0))
+                        .py(px(2.0))
+                        .rounded(px(2.0))
+                        .text_color(t.warn)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.bg_hover))
+                        .on_click(cx.listener(|this, _, window, cx| this.install_language_server(window, cx)))
+                        .child("Python language server: Install"),
+                )
+            })
             .when_some(self.missing_status(), |d, text| {
                 d.child(
                     div()

@@ -142,6 +142,8 @@ pub(crate) struct Prepaint {
     layout: Option<LayoutCache>,
     quads_back: Vec<PaintQuad>,
     quads_front: Vec<PaintQuad>,
+    /// Wavy underlines under problems: start, width, colour.
+    squiggles: Vec<(Point<Pixels>, Pixels, Hsla)>,
     gutter: Vec<(ShapedLine, Point<Pixels>)>,
     placeholders: Vec<(ShapedLine, Point<Pixels>, Bounds<Pixels>)>,
     minimap: Vec<PaintQuad>,
@@ -264,6 +266,7 @@ impl gpui_kit::Element for EditorElement {
             layout: None,
             quads_back: Vec::new(),
             quads_front: Vec::new(),
+            squiggles: Vec::new(),
             gutter: Vec::new(),
             placeholders: Vec::new(),
             minimap: Vec::new(),
@@ -420,6 +423,42 @@ impl gpui_kit::Element for EditorElement {
                 }
             }
         }
+        // Other uses of the name under the cursor (where it's written to gets a line underneath).
+        let occurrences = self.editor.read(cx).occurrences.clone();
+        for (s, e, write) in occurrences.iter() {
+            if let Some(r) = row_layouts.iter().find(|r| r.line == s.line) {
+                let x0 = x_of(r, s.col);
+                let x1 = if e.line == s.line { x_of(r, e.col) } else { text_left + f32::from(r.shaped.width) };
+                if x1 > x0 {
+                    back.push(fill(Bounds::new(point(px(x0), px(r.y)), size(px(x1 - x0), line_height)), theme.highlight));
+                    if *write {
+                        back.push(fill(
+                            Bounds::new(point(px(x0), px(r.y) + line_height - px(2.0)), size(px(x1 - x0), px(2.0))),
+                            theme.highlight_strong,
+                        ));
+                    }
+                }
+            }
+        }
+        // Problems from the language server and Ruff: a wavy line under each.
+        let mut squiggles = Vec::new();
+        let diagnostics = self.editor.read(cx).diagnostics.clone();
+        for d in diagnostics.iter() {
+            let color = match d.severity {
+                1 => theme.err,
+                2 => theme.warn,
+                _ => theme.info,
+            };
+            for r in row_layouts.iter().filter(|r| r.line >= d.start.line && r.line <= d.end.line) {
+                let x0 = if r.line == d.start.line { x_of(r, d.start.col) } else { text_left };
+                let mut x1 = if r.line == d.end.line { x_of(r, d.end.col) } else { text_left + f32::from(r.shaped.width) };
+                // An empty range (end of line) still shows a short mark.
+                if x1 - x0 < 4.0 {
+                    x1 = x0 + char_width.max(4.0);
+                }
+                squiggles.push((point(px(x0), px(r.y + lh - 3.0)), px(x1 - x0), color));
+            }
+        }
         let sel_color = if focused { theme.selection } else { theme.selection_unfocused };
         for &(a, h) in &selections {
             let (start, end) = if a <= h { (a, h) } else { (h, a) };
@@ -559,6 +598,7 @@ impl gpui_kit::Element for EditorElement {
             }),
             quads_back: back,
             quads_front: front,
+            squiggles,
             gutter,
             placeholders,
             minimap: minimap_quads,
@@ -605,6 +645,9 @@ impl gpui_kit::Element for EditorElement {
             for (ph, origin, b) in prepaint.placeholders.drain(..) {
                 window.paint_quad(fill(b, theme.bg_hover));
                 let _ = ph.paint(origin, line_height, TextAlign::Left, None, window, cx);
+            }
+            for (origin, width, color) in prepaint.squiggles.drain(..) {
+                window.paint_underline(origin, width, &gpui_kit::UnderlineStyle { thickness: px(1.0), color: Some(color), wavy: true });
             }
             for q in prepaint.quads_front.drain(..) {
                 window.paint_quad(q);

@@ -381,7 +381,9 @@ impl LspServer {
             return item;
         }
         let res = answer(self.client.request("completionItem/resolve", item.raw.clone())).await;
+        let extra = crate::completion::additional_edits(&res);
         CompletionItem {
+            additional_edits: if extra.is_empty() { item.additional_edits.clone() } else { extra },
             detail: res.get("detail").and_then(Value::as_str).map(str::to_owned).or(item.detail.clone()),
             documentation: res
                 .get("documentation")
