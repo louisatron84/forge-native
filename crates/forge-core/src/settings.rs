@@ -187,7 +187,8 @@ pub struct ProjectSettings {
     pub lint_with_ruff: Option<bool>,
 }
 
-pub const PROJECT_SETTING_KEYS: [&str; 6] = ["tabSize", "pythonPath", "shell", "formatter", "formatOnSave", "lintWithRuff"];
+pub const PROJECT_SETTING_KEYS: [&str; 6] =
+    ["tabSize", "pythonPath", "shell", "formatter", "formatOnSave", "lintWithRuff"];
 
 /// Only the valid project-level values from a project settings file; anything else is ignored.
 pub fn normalize_project_settings(raw: &Value) -> ProjectSettings {
@@ -286,7 +287,9 @@ mod tests {
 
     #[test]
     fn project_settings_keep_only_valid_project_level_values() {
-        let p = normalize_project_settings(&json!({ "tabSize": 2, "pythonPath": " .venv/bin/python ", "shell": "bash", "fontSize": 30, "theme": "light" }));
+        let p = normalize_project_settings(
+            &json!({ "tabSize": 2, "pythonPath": " .venv/bin/python ", "shell": "bash", "fontSize": 30, "theme": "light" }),
+        );
         assert_eq!(
             p,
             ProjectSettings {
@@ -298,7 +301,8 @@ mod tests {
         );
         assert_eq!(normalize_project_settings(&json!({ "tabSize": 3, "shell": "a b" })), ProjectSettings::default());
         assert_eq!(normalize_project_settings(&json!([1])), ProjectSettings::default());
-        let eff = effective_settings(&Settings::default(), &ProjectSettings { tab_size: Some(2), ..Default::default() });
+        let eff =
+            effective_settings(&Settings::default(), &ProjectSettings { tab_size: Some(2), ..Default::default() });
         assert_eq!(eff.tab_size, 2);
     }
 

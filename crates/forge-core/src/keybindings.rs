@@ -78,16 +78,15 @@ pub fn normalize_key(input: &str) -> Option<String> {
         }
         key = Some(if let Some(named) = key_name(&p.to_lowercase()) {
             named.to_owned()
-        } else if is_function_key(p) {
-            p.to_uppercase()
-        } else if p.chars().count() == 1 {
+        } else if is_function_key(p) || p.chars().count() == 1 {
             p.to_uppercase()
         } else {
             return None;
         });
     }
     let key = key?;
-    let mut out: Vec<String> = ["Ctrl", "Shift", "Alt"].iter().filter(|m| mods.contains(*m)).map(|m| (*m).to_owned()).collect();
+    let mut out: Vec<String> =
+        ["Ctrl", "Shift", "Alt"].iter().filter(|m| mods.contains(*m)).map(|m| (*m).to_owned()).collect();
     out.push(key);
     Some(out.join("+"))
 }
@@ -216,7 +215,9 @@ mod tests {
 
     #[test]
     fn accepts_a_key_a_list_of_keys_or_null_to_remove() {
-        let out = normalize_keybindings(&json!({ "run.file": "ctrl+r", "palette.files": ["Ctrl+P", "ctrl+e", "Ctrl+P"], "nav.back": null }));
+        let out = normalize_keybindings(
+            &json!({ "run.file": "ctrl+r", "palette.files": ["Ctrl+P", "ctrl+e", "Ctrl+P"], "nav.back": null }),
+        );
         assert_eq!(out.get("run.file"), Some(&vec!["Ctrl+R".to_owned()]));
         assert_eq!(out.get("palette.files"), Some(&vec!["Ctrl+P".to_owned(), "Ctrl+E".to_owned()]));
         assert_eq!(out.get("nav.back"), Some(&vec![]));

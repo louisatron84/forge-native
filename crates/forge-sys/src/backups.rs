@@ -231,8 +231,10 @@ mod tests {
         }
         // a saved, b closed, c renamed (still unsaved).
         let actions = k.sync(&[snap(1, "/p/a.py", false, "v2"), snap(3, "/p/renamed.py", true, "v2")], 0);
-        let mut removed: Vec<String> =
-            actions.iter().filter_map(|a| if let BackupAction::Remove { path } = a { Some(path.clone()) } else { None }).collect();
+        let mut removed: Vec<String> = actions
+            .iter()
+            .filter_map(|a| if let BackupAction::Remove { path } = a { Some(path.clone()) } else { None })
+            .collect();
         removed.sort();
         assert_eq!(removed, ["/p/a.py", "/p/b.py", "/p/c.py"]);
         // The renamed file is backed up again under its new name.

@@ -135,8 +135,10 @@ mod tests {
         let res = prepare_project_dir_with(dir.path(), &FsOps { rename: &fail, copy_dir: &partial });
         assert_eq!(res, ProjectDirResult::Error);
         assert!(!dir.path().join(".forge").exists());
-        let names: Vec<String> =
-            std::fs::read_dir(dir.path()).expect("dir").map(|e| e.expect("e").file_name().to_string_lossy().into_owned()).collect();
+        let names: Vec<String> = std::fs::read_dir(dir.path())
+            .expect("dir")
+            .map(|e| e.expect("e").file_name().to_string_lossy().into_owned())
+            .collect();
         assert_eq!(names, [".ideforfun"]);
     }
 }

@@ -9,8 +9,12 @@
 
 use crate::backups::backup_name;
 use forge_core::keybindings::{keybindings_json, normalize_keybindings, KeyOverrides};
-use forge_core::project_state::{add_recent, normalize_recent, normalize_workspace_state, remove_recent, WorkspaceState};
-use forge_core::settings::{normalize_project_settings, normalize_settings, ProjectSettings, Settings, PROJECT_DIR, PROJECT_SETTINGS_FILE};
+use forge_core::project_state::{
+    add_recent, normalize_recent, normalize_workspace_state, remove_recent, WorkspaceState,
+};
+use forge_core::settings::{
+    normalize_project_settings, normalize_settings, ProjectSettings, Settings, PROJECT_DIR, PROJECT_SETTINGS_FILE,
+};
 use serde_json::Value;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -296,8 +300,7 @@ mod tests {
         us.remove_recent("/b").expect("remove");
         assert_eq!(us.recent(), ["/a"]);
         assert!(us.workspace("/a").is_none());
-        let mut ws = WorkspaceState::default();
-        ws.task = "debug".into();
+        let ws = WorkspaceState { task: "debug".into(), ..Default::default() };
         us.save_workspace("/a", &ws).expect("save");
         assert_eq!(us.workspace("/a").map(|w| w.task), Some("debug".to_owned()));
     }
@@ -334,7 +337,10 @@ mod tests {
         patch.insert("pythonPath".into(), json!(".venv/bin/python"));
         patch.insert("tabSize".into(), Value::Null);
         update_project_settings(root, &patch).expect("update");
-        assert_eq!(read_json(&project_settings_path(root)).value(), json!({ "note": "mine", "pythonPath": ".venv/bin/python" }));
+        assert_eq!(
+            read_json(&project_settings_path(root)).value(),
+            json!({ "note": "mine", "pythonPath": ".venv/bin/python" })
+        );
         let ps = read_project_settings(root);
         assert!(ps.exists);
         assert_eq!(ps.settings.python_path.as_deref(), Some(".venv/bin/python"));

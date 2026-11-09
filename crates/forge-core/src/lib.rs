@@ -2,6 +2,7 @@
 //! keybindings, project state, names, and (as the port goes on) the project
 //! graph, run configurations, network/memory/profile models and more.
 
+pub mod dock;
 pub mod keybindings;
 pub mod names;
 pub mod project_state;

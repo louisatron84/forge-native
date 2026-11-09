@@ -150,7 +150,9 @@ pub fn normalize_workspace_state(raw: &Value) -> WorkspaceState {
     let terminals = r
         .get("terminals")
         .and_then(Value::as_array)
-        .map(|ts| ts.iter().filter_map(Value::as_str).filter(|t| plain(t, true, true)).take(10).map(str::to_owned).collect())
+        .map(|ts| {
+            ts.iter().filter_map(Value::as_str).filter(|t| plain(t, true, true)).take(10).map(str::to_owned).collect()
+        })
         .unwrap_or_default();
     let breakpoints = r
         .get("breakpoints")
@@ -162,7 +164,8 @@ pub fn normalize_workspace_state(raw: &Value) -> WorkspaceState {
                     let o = b.as_object()?;
                     let path = o.get("path")?.as_str().filter(|p| !p.is_empty())?;
                     let line = o.get("line")?.as_u64()?;
-                    let text = |k: &str| o.get(k).and_then(Value::as_str).filter(|s| !s.trim().is_empty()).map(str::to_owned);
+                    let text =
+                        |k: &str| o.get(k).and_then(Value::as_str).filter(|s| !s.trim().is_empty()).map(str::to_owned);
                     Some(SavedBreakpointState {
                         path: path.to_owned(),
                         line,
@@ -180,18 +183,20 @@ pub fn normalize_workspace_state(raw: &Value) -> WorkspaceState {
         groups,
         terminals,
         panel: r.get("panel").and_then(Value::as_str).filter(|p| plain(p, false, false)).map(str::to_owned),
-        task: r
-            .get("task")
-            .and_then(Value::as_str)
-            .filter(|t| TASKS.contains(t))
-            .unwrap_or("code")
-            .to_owned(),
+        task: r.get("task").and_then(Value::as_str).filter(|t| TASKS.contains(t)).unwrap_or("code").to_owned(),
         run_config: r.get("runConfig").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned),
         breakpoints,
         watches: r
             .get("watches")
             .and_then(Value::as_array)
-            .map(|ws| ws.iter().filter_map(Value::as_str).filter(|w| !w.trim().is_empty()).take(100).map(str::to_owned).collect())
+            .map(|ws| {
+                ws.iter()
+                    .filter_map(Value::as_str)
+                    .filter(|w| !w.trim().is_empty())
+                    .take(100)
+                    .map(str::to_owned)
+                    .collect()
+            })
             .unwrap_or_default(),
         exception_filters: r.get("exceptionFilters").and_then(Value::as_array).map(|fs| {
             fs.iter().filter_map(Value::as_str).filter(|f| plain(f, false, false)).map(str::to_owned).collect()
@@ -239,7 +244,10 @@ mod tests {
     fn gives_an_empty_layout_for_garbage() {
         let s = normalize_workspace_state(&Value::Null);
         assert_eq!(s.groups, [GroupState::default()]);
-        assert_eq!((s.active_group, s.task.as_str(), s.panel.clone(), s.exception_filters.clone()), (0, "code", None, None));
+        assert_eq!(
+            (s.active_group, s.task.as_str(), s.panel.clone(), s.exception_filters.clone()),
+            (0, "code", None, None)
+        );
         assert!(s.terminals.is_empty() && s.breakpoints.is_empty() && s.watches.is_empty() && s.run_config.is_none());
     }
 
@@ -262,7 +270,10 @@ mod tests {
                     tabs: vec![DocState { path: "/a.py".into(), line: 3, col: 0, scroll_top: 40 }],
                     active: Some("/a.py".into())
                 },
-                GroupState { tabs: vec![DocState { path: "/b.py".into(), ..Default::default() }], active: Some("/b.py".into()) },
+                GroupState {
+                    tabs: vec![DocState { path: "/b.py".into(), ..Default::default() }],
+                    active: Some("/b.py".into())
+                },
             ]
         );
         assert_eq!(s.active_group, 1);

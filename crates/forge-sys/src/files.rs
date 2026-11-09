@@ -146,7 +146,10 @@ mod tests {
 
     #[test]
     fn puts_folders_before_files_each_sorted_case_insensitively() {
-        let out = sort_and_filter(Path::new("/p"), vec![e("b.py", false), e("Zeta", true), e("A.txt", false), e("alpha", true)]);
+        let out = sort_and_filter(
+            Path::new("/p"),
+            vec![e("b.py", false), e("Zeta", true), e("A.txt", false), e("alpha", true)],
+        );
         assert_eq!(out.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(), ["alpha", "Zeta", "A.txt", "b.py"]);
     }
 
@@ -185,13 +188,19 @@ mod tests {
         let mut rels: Vec<&str> = files.iter().map(|f| f.rel.as_str()).collect();
         rels.sort_unstable();
         assert_eq!(rels, ["main.py", "pkg/a.py", "pkg/sub/b.py"]);
-        assert_eq!(files.iter().find(|f| f.rel == "pkg/a.py").map(|f| f.path.clone()), Some(root.path().join("pkg").join("a.py")));
+        assert_eq!(
+            files.iter().find(|f| f.rel == "pkg/a.py").map(|f| f.path.clone()),
+            Some(root.path().join("pkg").join("a.py"))
+        );
     }
 
     #[test]
     fn stops_at_the_limit_shallow_files_first() {
         let root = project();
-        assert_eq!(list_files(root.path(), 2).iter().map(|f| f.rel.as_str()).collect::<Vec<_>>(), ["main.py", "pkg/a.py"]);
+        assert_eq!(
+            list_files(root.path(), 2).iter().map(|f| f.rel.as_str()).collect::<Vec<_>>(),
+            ["main.py", "pkg/a.py"]
+        );
     }
 
     #[test]
@@ -230,8 +239,10 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         std::fs::write(dir.path().join("a.py"), "a").expect("write");
         rename_entry(&dir.path().join("a.py"), "A.py").expect("rename");
-        let names: Vec<String> =
-            std::fs::read_dir(dir.path()).expect("dir").map(|e| e.expect("entry").file_name().to_string_lossy().into_owned()).collect();
+        let names: Vec<String> = std::fs::read_dir(dir.path())
+            .expect("dir")
+            .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+            .collect();
         assert_eq!(names, ["A.py"]);
     }
 

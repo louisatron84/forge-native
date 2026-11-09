@@ -9,13 +9,23 @@ use std::path::Path;
 /// What reading a file for the editor gave.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TextFile {
-    Text { text: String, encoding: Encoding, size: u64 },
+    Text {
+        text: String,
+        encoding: Encoding,
+        size: u64,
+    },
     /// Has NUL bytes: probably not text. Read with `force` to open it anyway.
-    Binary { size: u64 },
+    Binary {
+        size: u64,
+    },
     /// Big enough to ask first. Read with `force` to open it anyway.
-    Huge { size: u64 },
+    Huge {
+        size: u64,
+    },
     /// Too big to open at all.
-    TooLarge { size: u64 },
+    TooLarge {
+        size: u64,
+    },
 }
 
 /// NUL bytes near the start mean it's almost certainly not a text file.
@@ -36,7 +46,8 @@ fn bom_encoding(buf: &[u8]) -> Option<Encoding> {
 }
 
 fn decode_utf16(buf: &[u8], little: bool) -> String {
-    let units = buf.chunks_exact(2).map(|p| if little { u16::from_le_bytes([p[0], p[1]]) } else { u16::from_be_bytes([p[0], p[1]]) });
+    let units =
+        buf.as_chunks::<2>().0.iter().map(|p| if little { u16::from_le_bytes(*p) } else { u16::from_be_bytes(*p) });
     char::decode_utf16(units).map(|r| r.unwrap_or(char::REPLACEMENT_CHARACTER)).collect()
 }
 
@@ -174,12 +185,16 @@ mod tests {
         // UTF-16 files (which contain NUL bytes) open as text.
         let u16 = dir.path().join("u16.txt");
         std::fs::write(&u16, encode("hi", Encoding::Utf16le)).expect("write");
-        assert!(matches!(read_text_file(&u16, false, None).expect("read"), TextFile::Text { ref text, encoding: Encoding::Utf16le, .. } if text == "hi"));
+        assert!(
+            matches!(read_text_file(&u16, false, None).expect("read"), TextFile::Text { ref text, encoding: Encoding::Utf16le, .. } if text == "hi")
+        );
 
         // Reopen with a chosen encoding.
         let w = dir.path().join("w.txt");
         std::fs::write(&w, "café".as_bytes()).expect("write");
-        assert!(matches!(read_text_file(&w, false, Some(Encoding::Latin1)).expect("read"), TextFile::Text { ref text, .. } if text == "cafÃ©"));
+        assert!(
+            matches!(read_text_file(&w, false, Some(Encoding::Latin1)).expect("read"), TextFile::Text { ref text, .. } if text == "cafÃ©")
+        );
 
         // Write in the requested encoding, creating folders.
         let out = dir.path().join("sub").join("out.txt");
