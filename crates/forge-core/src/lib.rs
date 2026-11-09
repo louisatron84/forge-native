@@ -3,6 +3,7 @@
 //! graph, run configurations, network/memory/profile models and more.
 
 pub mod commands;
+pub mod deps;
 pub mod dock;
 pub mod dotenv;
 pub mod fuzzy;

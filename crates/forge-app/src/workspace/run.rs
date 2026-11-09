@@ -28,6 +28,8 @@ pub(crate) struct RunState {
     /// Goes up with every run, so late events from an old run are ignored.
     pub id: u64,
     pub _pump: Option<gpui_kit::Task<()>>,
+    /// What to do when the current run ends (pip / venv runs re-check the environment).
+    pub after: Option<super::pyenv::AfterRun>,
 }
 
 impl Workspace {
@@ -169,22 +171,23 @@ impl Workspace {
             cwd: PathBuf::from(&spec.cwd),
             prefix: Vec::new(),
         };
-        self.start_run(run_spec, cx);
+        self.start_run(run_spec, window, cx);
         self.focus_editor(window, cx);
     }
 
     /// Start a program with its output in the Output panel.
-    pub(crate) fn start_run(&mut self, spec: RunSpec, cx: &mut Context<Self>) {
+    pub(crate) fn start_run(&mut self, spec: RunSpec, window: &mut Window, cx: &mut Context<Self>) {
         self.stop_run(cx);
+        self.run.after = None;
         self.run.id += 1;
         let id = self.run.id;
         let (tx, mut rx) = futures::channel::mpsc::unbounded::<RunEvent>();
         self.run.current = PythonRun::start(spec, move |e| {
             let _ = tx.unbounded_send(e);
         });
-        self.run._pump = Some(cx.spawn(async move |this, cx| {
+        self.run._pump = Some(cx.spawn_in(window, async move |this, cx| {
             while let Some(e) = rx.next().await {
-                let ok = this.update(cx, |ws, cx| {
+                let ok = this.update_in(cx, |ws, window, cx| {
                     if ws.run.id != id {
                         return; // a late event from a run that was replaced
                     }
@@ -198,6 +201,9 @@ impl Workspace {
                         RunEvent::Exit { code, ms } => {
                             out.update(cx, |o, cx| o.finished(code, ms, cx));
                             ws.run.current = None;
+                            if let Some(after) = ws.run.after.take() {
+                                after(ws, code, window, cx);
+                            }
                         }
                     }
                     cx.notify();

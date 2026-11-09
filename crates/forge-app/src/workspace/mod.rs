@@ -7,6 +7,7 @@ mod chrome;
 mod commands;
 mod dock;
 mod editors;
+mod pyenv;
 mod run;
 
 use crate::app_state::{self, AppState};
@@ -95,6 +96,9 @@ pub struct Workspace {
     pub(crate) terminal: Entity<TerminalPanel>,
     pub(crate) output: Entity<OutputPanel>,
     pub(crate) run: run::RunState,
+    pub(crate) pyenv: pyenv::PyEnvState,
+    /// The interpreter setting last applied (a change re-checks the environment).
+    python_path_seen: Option<String>,
     /// The open project's overrides (`.forge/settings.json`).
     pub(crate) project_settings: ProjectSettings,
     project_settings_path: Option<PathBuf>,
@@ -206,6 +210,8 @@ impl Workspace {
             terminal,
             output,
             run: run::RunState::default(),
+            pyenv: pyenv::PyEnvState::default(),
+            python_path_seen: None,
             project_settings: ProjectSettings::default(),
             project_settings_path: None,
             note: None,
@@ -262,6 +268,13 @@ impl Workspace {
         effective_settings(app_state::settings(cx), &project)
     }
 
+    /// Read the open project's settings again.
+    pub(crate) fn reload_project_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(root) = self.root.clone() {
+            self.load_project_settings(&root, window, cx);
+        }
+    }
+
     /// Read `<project>/.forge/settings.json` (a missing file means no overrides).
     fn load_project_settings(&mut self, folder: &Path, window: &mut Window, cx: &mut Context<Self>) {
         let f = read_project_settings(folder);
@@ -302,6 +315,13 @@ impl Workspace {
             v.shell_name = shell_name;
             cx.notify();
         });
+        if self.root.is_some() && self.python_path_seen.as_deref() != Some(s.python_path.as_str()) {
+            let first = self.python_path_seen.is_none();
+            self.python_path_seen = Some(s.python_path.clone());
+            if !first {
+                self.refresh_python_env(cx);
+            }
+        }
         let shell = s.shell.clone();
         self.output.update(cx, |o, cx| {
             o.font_size = s.font_size as f32 - 1.0;
@@ -542,6 +562,8 @@ impl Workspace {
         self.run.config = None;
         self.run.last_task = None;
         self.load_run_file(&folder, window, cx);
+        self.python_path_seen = Some(self.effective_settings(cx).python_path);
+        self.refresh_python_env(cx);
         self.file_tree.update(cx, |t, cx| t.set_root(Some(folder.clone()), cx));
         self.terminal.update(cx, |t, cx| t.move_idle_to(Some(folder.clone()), cx));
         self.refresh_recent(cx);
@@ -865,6 +887,14 @@ impl Workspace {
         if let (Some(p), Some(root)) = (self.project_settings_path.clone(), self.root.clone()) {
             if same_path(path, &p.to_string_lossy()) {
                 self.load_project_settings(&root, window, cx);
+            }
+        }
+        if let Some(root) = self.root.clone() {
+            let name = Path::new(path).file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+            let at_root =
+                Path::new(path).parent().is_some_and(|d| same_path(&d.to_string_lossy(), &root.to_string_lossy()));
+            if at_root && (name == "requirements.txt" || name == "pyproject.toml") {
+                self.refresh_python_env(cx);
             }
         }
         if let (Some(p), Some(root)) = (self.run.file_path.clone(), self.root.clone()) {

@@ -255,6 +255,14 @@ impl Workspace {
                 }
             }
 
+            // ---------- Python ----------
+            "python.selectInterpreter" => self.pick_interpreter(window, cx),
+            "python.createVenv" => self.create_venv(None, window, cx),
+            "python.packages" => self.show_packages(window, cx),
+            "python.installRequirements" => self.install_requirements(window, cx),
+            "python.checkDeps" => self.check_deps_command(window, cx),
+            "python.installRuff" => self.pip_install("ruff", window, cx),
+
             // ---------- find ----------
             "find.open" | "find.replace" => {
                 let replace = id == "find.replace";

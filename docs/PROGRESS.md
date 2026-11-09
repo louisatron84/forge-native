@@ -45,8 +45,8 @@ with the same text, and the old source and tests. This ledger is how work resume
 - [x] T2-13 Project-specific settings
 - [x] T2-14 Task runner for predefined project commands
 - [x] T2-15 Run configurations (arguments, environment variables and working directory)
-- [ ] T2-16 Python environment management (create, select and manage virtual environments)
-- [ ] T2-17 Dependency management integration (pip, requirements.txt, pyproject.toml)
+- [x] T2-16 Python environment management (create, select and manage virtual environments)
+- [x] T2-17 Dependency management integration (pip, requirements.txt, pyproject.toml)
 - [ ] T2-18 Updates
 - [ ] T2-19 Test runner integration (pytest, unittest)
 
@@ -188,3 +188,4 @@ with the same text, and the old source and tests. This ledger is how work resume
 - 2026-11-09: editor view (GPUI) on forge-text: T1-03, T1-04, T1-05, T1-06, T1-07, T1-09, T1-10, T1-11, T1-12, T1-13, T1-14, T1-15, T1-16, T2-02. 159 model tests + 13 headless view tests. Empty window 75 MB (debug).
 - 2026-11-09: workspace shell: dock with the four tasks (layouts.json), tabs and split groups, file tree (create/rename/delete), palette (commands, files, line, choices, shortcut capture), Keyboard Shortcuts, Welcome page, status bar, save/close warnings, encodings, line endings, large/binary files, crash backups, workspace state. T1-01, T1-02, T1-08, T1-17..T1-21, T2-01, T2-06, T2-10, T2-11. Window with a project 77 MB (debug).
 - 2026-11-09: find/replace bar, Settings dialog and project settings, integrated terminal (alacritty_terminal on ConPTY/pty: several terminals, shells, copy/paste, selection, history, restored per project). T2-03, T2-05, T2-07, T2-08, T2-09, T2-12, T2-13. Window with a project and a shell 129 MB (debug).
+- 2026-11-09: Run with the Output panel, run configurations and tasks, Python environments (interpreter picker, .venv, packages, missing dependencies). T2-04, T2-14, T2-15, T2-16, T2-17. forge-run crate (real-Python tests).

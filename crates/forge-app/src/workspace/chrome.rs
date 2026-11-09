@@ -155,6 +155,37 @@ impl Workspace {
             .border_color(t.border)
             .text_color(t.fg_muted)
             .text_size(px(12.0))
+            .when_some(self.missing_status(), |d, text| {
+                d.child(
+                    div()
+                        .id("sb-deps")
+                        .px(px(7.0))
+                        .py(px(2.0))
+                        .rounded(px(2.0))
+                        .whitespace_nowrap()
+                        .text_color(t.warn)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.bg_hover))
+                        .on_click(cx.listener(|this, _, window, cx| this.show_missing(window, cx)))
+                        .child(text),
+                )
+            })
+            .when_some(self.python_status(), |d, text| {
+                d.child(
+                    div()
+                        .id("sb-python")
+                        .px(px(7.0))
+                        .py(px(2.0))
+                        .rounded(px(2.0))
+                        .whitespace_nowrap()
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.bg_hover).text_color(t.fg))
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.run_command("python.selectInterpreter", window, cx)),
+                        )
+                        .child(text),
+                )
+            })
             .when(self.root.is_some(), |d| {
                 let label = format!("▶ {}", self.run.config.clone().unwrap_or_else(|| "Current file".into()));
                 d.child(
