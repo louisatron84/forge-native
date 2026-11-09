@@ -15,9 +15,9 @@ its tests are the specification; `docs/parity/` lists every feature, and
 | `forge-run` | Running Python: interpreter discovery, venvs and pip, run/trace spawning, the trace socket server, test runners, lint and format tools. | forge-core, forge-sys |
 | `forge-scan` | Runs `python/projectScan.py` and `python/dataflow.py` and parses their JSON into forge-core types. | forge-core, forge-run |
 | `forge-lsp` | The language-server client (JSON-RPC over stdio) and basedpyright setup. | forge-core |
-| `forge-dap` | The debug-adapter client (debugpy). | forge-core, forge-run |
+| `forge-dap` | The debug-adapter client (debugpy), persistent breakpoints and child adapter connections. Uses the shared Content-Length framing and text line-marker model. | forge-core, forge-lsp, forge-text |
 | `forge-term` | Terminal sessions: `portable-pty` plus the `alacritty_terminal` screen model. | — |
-| `forge-update` | Updates (Velopack), release notes, What's new. | forge-core |
+| `forge-update` | Updates (Velopack), release notes, What's new. | velopack, ureq, semver, serde |
 | `forge-app` | Everything GPUI: the window, docking and tasks, every panel and view, themes, keymap and menus. The only crate that uses `gpui-kit`. | all of the above |
 
 `python/` holds the Python helpers **copied unchanged** from the old repo; Rust

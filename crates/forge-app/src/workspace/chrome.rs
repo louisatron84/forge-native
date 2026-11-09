@@ -155,6 +155,24 @@ impl Workspace {
             .border_color(t.border)
             .text_color(t.fg_muted)
             .text_size(px(12.0))
+            .when(
+                matches!(
+                    app_state::state(cx).updater.state(),
+                    forge_update::State::Available(_) | forge_update::State::Ready(_)
+                ),
+                |d| {
+                    let ready = matches!(app_state::state(cx).updater.state(), forge_update::State::Ready(_));
+                    d.child(
+                        div()
+                            .id("sb-update")
+                            .px(px(7.0))
+                            .text_color(t.accent)
+                            .cursor_pointer()
+                            .child(if ready { "Update ready — Restart now" } else { "Update available" })
+                            .on_click(cx.listener(|this, _, window, cx| this.check_updates(false, window, cx))),
+                    )
+                },
+            )
             .when(self.root.is_some(), |d| {
                 let (errors, warnings) = self.lsp.counts;
                 d.child(

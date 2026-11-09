@@ -18,6 +18,7 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 
 fn main() {
+    forge_update::startup();
     gpui_kit::application().run(|cx: &mut App| {
         gpui_kit::init(cx);
         let fonts: Vec<Cow<'static, [u8]>> = theme::FONTS.iter().map(|f| Cow::Borrowed(*f)).collect();
@@ -29,6 +30,10 @@ fn main() {
         // Closing the last window quits.
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
+                let state = app_state::state(cx);
+                if let Err(error) = state.updater.install_on_exit(state.restart_after_update) {
+                    eprintln!("Could not install update: {error}");
+                }
                 cx.quit();
             }
         })

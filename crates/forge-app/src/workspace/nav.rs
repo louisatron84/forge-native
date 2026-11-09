@@ -18,7 +18,10 @@ use std::time::Duration;
 impl Workspace {
     fn rel_path(&self, path: &str) -> String {
         match &self.root {
-            Some(r) if is_inside(path, &r.to_string_lossy()) => Path::new(path).strip_prefix(r).map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_else(|_| path.to_owned()),
+            Some(r) if is_inside(path, &r.to_string_lossy()) => Path::new(path)
+                .strip_prefix(r)
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| path.to_owned()),
             _ => path.to_owned(),
         }
     }
@@ -29,16 +32,23 @@ impl Workspace {
         let doc = ed.document()?;
         let d = &doc.read(cx).doc;
         let lang = d.mode().language;
-        if lang.server.is_none() {
-            return Some(format!("{feature} needs a language server, and there isn't one for {} files yet.", lang.name));
+        if lang.server.is_none() && self.language_server(d.path()).is_none() {
+            return Some(format!(
+                "{feature} needs a language server, and there isn't one for {} files yet.",
+                lang.name
+            ));
         }
         if d.large {
             return Some("This file is too large for the language server (it is skipped to stay responsive).".into());
         }
-        match &self.lsp.server {
+        match self.active_language_server(cx) {
             Some(s) if s.knows(d.path()) => None,
-            _ if self.lsp.status == super::lsp::LspStatus::Missing => Some(format!("{feature} needs the Python language server: click \"Install\" in the status bar.")),
-            _ => Some(format!("{feature} will work once basedpyright has started (it starts when a Python file is open).")),
+            _ if self.lsp.status == super::lsp::LspStatus::Missing => {
+                Some(format!("{feature} needs the Python language server: click \"Install\" in the status bar."))
+            }
+            _ => Some(format!(
+                "{feature} will work once basedpyright has started (it starts when a Python file is open)."
+            )),
         }
     }
 
@@ -50,7 +60,11 @@ impl Workspace {
         let c = ed.cursor();
         // Just after a name counts as on it.
         let line: Vec<char> = doc.read(cx).doc.buffer.line(c.line).chars().collect();
-        let on = if c.col > 0 && c.col <= line.len() && !line.get(c.col).is_some_and(|ch| ch.is_alphanumeric() || *ch == '_') && (line[c.col - 1].is_alphanumeric() || line[c.col - 1] == '_') {
+        let on = if c.col > 0
+            && c.col <= line.len()
+            && !line.get(c.col).is_some_and(|ch| ch.is_alphanumeric() || *ch == '_')
+            && (line[c.col - 1].is_alphanumeric() || line[c.col - 1] == '_')
+        {
             Pos::new(c.line, c.col - 1)
         } else {
             c
@@ -61,7 +75,12 @@ impl Workspace {
 
     /// Lines of files: open ones from the editor, others from disk (cached).
     fn line_reader(&self, cx: &gpui_kit::App) -> impl FnMut(&str) -> Vec<String> + use<> {
-        let open: Vec<(String, Vec<String>)> = self.docs.values().map(|d| &d.read(cx).doc).map(|d| (d.path().to_owned(), d.buffer.lines().to_vec())).collect();
+        let open: Vec<(String, Vec<String>)> = self
+            .docs
+            .values()
+            .map(|d| &d.read(cx).doc)
+            .map(|d| (d.path().to_owned(), d.buffer.lines().to_vec()))
+            .collect();
         let mut cache: HashMap<String, Vec<String>> = HashMap::new();
         move |path: &str| {
             if let Some((_, l)) = open.iter().find(|(p, _)| same_path(p, path)) {
@@ -69,7 +88,9 @@ impl Workspace {
             }
             cache
                 .entry(path.to_owned())
-                .or_insert_with(|| std::fs::read_to_string(path).map(|t| t.lines().map(str::to_owned).collect()).unwrap_or_default())
+                .or_insert_with(|| {
+                    std::fs::read_to_string(path).map(|t| t.lines().map(str::to_owned).collect()).unwrap_or_default()
+                })
                 .clone()
         }
     }
@@ -84,7 +105,11 @@ impl Workspace {
                 let line = lines.get(l.start.line).cloned().unwrap_or_default();
                 let indent = line.chars().take_while(|c| c.is_whitespace()).count();
                 let start = forge_text::chars::col_from_utf16(&line, l.start.col);
-                let end = if l.end.line == l.start.line { forge_text::chars::col_from_utf16(&line, l.end.col) } else { line.chars().count() };
+                let end = if l.end.line == l.start.line {
+                    forge_text::chars::col_from_utf16(&line, l.end.col)
+                } else {
+                    line.chars().count()
+                };
                 let preview = line.trim().to_owned();
                 let hl = (start.saturating_sub(indent), end.saturating_sub(indent).max(start.saturating_sub(indent)));
                 (self.rel_path(&l.path), Found { location: l.clone(), preview, hl })
@@ -101,7 +126,7 @@ impl Workspace {
         let Some((path, at, _)) = self.lsp_here(cx) else { return };
         let name = self.word_at_cursor(cx).map(|w| w.2).unwrap_or_default();
         self.references.update(cx, |r, cx| r.message(format!("Looking for references to \"{name}\"…"), cx));
-        let Some(server) = self.lsp.server.clone() else { return };
+        let Some(server) = self.active_language_server(cx) else { return };
         cx.spawn_in(window, async move |this, cx| {
             let locations = server.references(&path, at).await;
             this.update(cx, |ws, cx| {
@@ -120,15 +145,26 @@ impl Workspace {
             return self.status_note(why, cx);
         }
         let Some((path, at, _)) = self.lsp_here(cx) else { return };
-        let Some(server) = self.lsp.server.clone() else { return };
+        let Some(server) = self.active_language_server(cx) else { return };
         cx.spawn_in(window, async move |this, cx| {
+            if !server.uses_python_implementation_fallback() {
+                let locations = server.implementations(&path, at).await;
+                this.update(cx, |ws, cx| {
+                    let rows = ws.found(&locations, cx);
+                    ws.references.update(cx, |r, cx| r.show("Implementations", rows, "implementation", cx));
+                })
+                .ok();
+                return;
+            }
             let symbols = server.symbols(&path).await;
             let chain = symbol_path_at(&symbols, at);
             let inner = chain.last().cloned();
             let parent = chain.len().checked_sub(2).and_then(|i| chain.get(i)).cloned();
             let target: Option<(DocSymbol, Option<String>)> = match (&inner, &parent) {
                 (Some(i), _) if i.kind == 5 && i.name_start.line == at.line => Some((i.clone(), None)),
-                (Some(i), Some(p)) if [6, 9, 12].contains(&i.kind) && p.kind == 5 && i.name_start.line == at.line => Some((p.clone(), Some(i.name.clone()))),
+                (Some(i), Some(p)) if [6, 9, 12].contains(&i.kind) && p.kind == 5 && i.name_start.line == at.line => {
+                    Some((p.clone(), Some(i.name.clone())))
+                }
                 _ => None,
             };
             let Some((cls, method)) = target else {
@@ -145,7 +181,10 @@ impl Workspace {
                         }
                     }
                 }
-                this.update(cx, |ws, cx| ws.status_note("Put the cursor on a class or a method to find its implementations.", cx)).ok();
+                this.update(cx, |ws, cx| {
+                    ws.status_note("Put the cursor on a class or a method to find its implementations.", cx)
+                })
+                .ok();
                 return;
             };
             let (what, title) = match &method {
@@ -154,7 +193,11 @@ impl Workspace {
             };
             this.update(cx, |ws, cx| {
                 ws.reveal_panel("references", cx);
-                let text = if method.is_some() { format!("Looking for overrides of {title}…") } else { format!("Looking for subclasses of {title}…") };
+                let text = if method.is_some() {
+                    format!("Looking for overrides of {title}…")
+                } else {
+                    format!("Looking for subclasses of {title}…")
+                };
                 ws.references.update(cx, |r, cx| r.message(text, cx));
             })
             .ok();
@@ -177,7 +220,11 @@ impl Workspace {
                         Some(m) => {
                             let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
                             if let Some((l, c)) = method_in_class(&refs, r.start.line, m) {
-                                found.push(Location { path: r.path.clone(), start: LspPos::new(l, to16(&lines[l], c)), end: LspPos::new(l, to16(&lines[l], c + m.chars().count())) });
+                                found.push(Location {
+                                    path: r.path.clone(),
+                                    start: LspPos::new(l, to16(&lines[l], c)),
+                                    end: LspPos::new(l, to16(&lines[l], c + m.chars().count())),
+                                });
                             }
                         }
                     }
@@ -196,7 +243,7 @@ impl Workspace {
 
     pub(crate) fn go_to_type_definition(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((path, at, _)) = self.lsp_here(cx) else { return };
-        let Some(server) = self.lsp.server.clone() else { return };
+        let Some(server) = self.active_language_server(cx) else { return };
         cx.spawn_in(window, async move |this, cx| {
             let locs = server.type_definition(&path, at).await;
             this.update_in(cx, |ws, window, cx| match locs.first() {
@@ -217,7 +264,7 @@ impl Workspace {
             return self.choose(why, Vec::new(), window, cx);
         }
         let Some((path, _, _)) = self.lsp_here(cx) else { return };
-        let Some(server) = self.lsp.server.clone() else { return };
+        let Some(server) = self.active_language_server(cx) else { return };
         cx.spawn_in(window, async move |this, cx| {
             let symbols = server.symbols(&path).await;
             this.update_in(cx, |ws, window, cx| {
@@ -236,7 +283,11 @@ impl Workspace {
                     }
                 }
                 walk(&symbols, "", &mut items);
-                let prompt = if items.is_empty() { "No classes or functions in this file" } else { "Go to a symbol in this file" };
+                let prompt = if items.is_empty() {
+                    "No classes or functions in this file"
+                } else {
+                    "Go to a symbol in this file"
+                };
                 ws.choose(prompt, items, window, cx);
             })
             .ok();
@@ -247,7 +298,11 @@ impl Workspace {
     /// Move the active editor's cursor to a server position.
     pub(crate) fn go_to_lsp_in_active(&mut self, at: LspPos, window: &mut Window, cx: &mut Context<Self>) {
         let ed = self.editors[self.tabs.active_group.min(1)].clone();
-        let col = ed.read(cx).document().map(|d| forge_text::chars::col_from_utf16(d.read(cx).doc.buffer.line(at.line), at.col)).unwrap_or(at.col);
+        let col = ed
+            .read(cx)
+            .document()
+            .map(|d| forge_text::chars::col_from_utf16(d.read(cx).doc.buffer.line(at.line), at.col))
+            .unwrap_or(at.col);
         ed.update(cx, |e, cx| e.go_to(at.line, col, cx));
         window.focus(&ed.focus_handle(cx), cx);
     }
@@ -257,7 +312,14 @@ impl Workspace {
         if self.lsp.server.as_ref().is_none_or(|s| !s.is_started()) {
             return self.choose("No language server is running (open a Python file first).", Vec::new(), window, cx);
         }
-        let initial = self.editors[self.tabs.active_group.min(1)].read(cx).selected_text(cx).trim().lines().next().unwrap_or("").to_owned();
+        let initial = self.editors[self.tabs.active_group.min(1)]
+            .read(cx)
+            .selected_text(cx)
+            .trim()
+            .lines()
+            .next()
+            .unwrap_or("")
+            .to_owned();
         self.palette.update(cx, |p, cx| {
             p.search(
                 "Go to a class, function or variable anywhere in the project",
@@ -270,11 +332,17 @@ impl Workspace {
     }
 
     /// The palette asks for project symbols matching `query`.
-    pub(crate) fn search_project_symbols(&mut self, query: String, generation: u64, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(server) = self.lsp.server.clone() else { return };
+    pub(crate) fn search_project_symbols(
+        &mut self,
+        query: String,
+        generation: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let servers = self.lsp.services.all();
         let root = self.root.clone();
         cx.spawn_in(window, async move |this, cx| {
-            let mut found = server.workspace_symbols(&query).await;
+            let mut found = forge_lsp::services::LanguageServices::workspace_symbols(servers, &query).await;
             // Project files first (the standard library can match too).
             let in_project = |p: &str| {
                 root.as_ref().is_some_and(|r| is_inside(p, &r.to_string_lossy()))
@@ -289,7 +357,11 @@ impl Workspace {
                     .map(|s| {
                         let loc = s.location.clone();
                         let kind = symbol_kind(s.kind).1;
-                        let detail = format!("{kind}{} · {}", s.container.as_ref().map(|c| format!(" in {c}")).unwrap_or_default(), ws.rel_path(&loc.path));
+                        let detail = format!(
+                            "{kind}{} · {}",
+                            s.container.as_ref().map(|c| format!(" in {c}")).unwrap_or_default(),
+                            ws.rel_path(&loc.path)
+                        );
                         Choice::new(s.name.clone(), move |ws, window, cx| {
                             ws.push_nav(cx);
                             ws.open_at_lsp(PathBuf::from(&loc.path), loc.start.line, loc.start.col, window, cx);
@@ -313,13 +385,15 @@ impl Workspace {
             return self.calls.update(cx, |c, cx| c.message(why, cx));
         }
         let Some((path, at, _)) = self.lsp_here(cx) else { return };
-        let Some(server) = self.lsp.server.clone() else { return };
+        let Some(server) = self.active_language_server(cx) else { return };
         cx.spawn_in(window, async move |this, cx| {
             let items = server.prepare_call_hierarchy(&path, at).await;
             this.update(cx, |ws, cx| {
                 ws.calls.update(cx, |c, cx| match items.into_iter().next() {
                     Some(item) => c.show(server.clone(), item, cx),
-                    None => c.message("Put the cursor on a function or method name (its definition or a call to it).", cx),
+                    None => {
+                        c.message("Put the cursor on a function or method name (its definition or a call to it).", cx)
+                    }
                 });
             })
             .ok();
@@ -362,7 +436,9 @@ impl Workspace {
         let ed = self.editors[self.tabs.active_group.min(1)].read(cx);
         let Some(doc) = ed.document().cloned() else {
             self.outline_for = Some(String::new());
-            return self.outline.update(cx, |o, cx| o.set(Vec::new(), Some("Open a Python file to see its outline.".into()), cx));
+            return self
+                .outline
+                .update(cx, |o, cx| o.set(Vec::new(), Some("Open a Python file to see its outline.".into()), cx));
         };
         let path = doc.read(cx).doc.path().to_owned();
         self.outline_for = Some(path.clone());
@@ -370,7 +446,7 @@ impl Workspace {
             return self.outline.update(cx, |o, cx| o.set(Vec::new(), Some(why), cx));
         }
         self.lsp_flush(cx);
-        let Some(server) = self.lsp.server.clone() else { return };
+        let Some(server) = self.active_language_server(cx) else { return };
         self.outline_task = Some(cx.spawn(async move |this, cx| {
             let symbols = server.symbols(&path).await;
             this.update(cx, |ws, cx| {
@@ -399,7 +475,7 @@ impl Workspace {
             }
         };
         let Some(doc) = ed.read(cx).document().cloned() else { return clear(self, cx) };
-        let Some(server) = self.lsp.server.clone() else { return clear(self, cx) };
+        let Some(server) = self.active_language_server(cx) else { return clear(self, cx) };
         let path = doc.read(cx).doc.path().to_owned();
         if !server.knows(&path) || !ed.read(cx).selected_text(cx).is_empty() {
             return clear(self, cx);
@@ -427,7 +503,13 @@ impl Workspace {
                 // Just the one under the cursor isn't worth highlighting.
                 let ranges: Vec<(Pos, Pos, bool)> = if list.len() > 1 {
                     list.iter()
-                        .map(|(s, e, w)| (super::lsp::from_lsp(d.buffer.line(s.line), *s), super::lsp::from_lsp(d.buffer.line(e.line), *e), *w))
+                        .map(|(s, e, w)| {
+                            (
+                                super::lsp::from_lsp(d.buffer.line(s.line), *s),
+                                super::lsp::from_lsp(d.buffer.line(e.line), *e),
+                                *w,
+                            )
+                        })
                         .collect()
                 } else {
                     Vec::new()
@@ -444,7 +526,7 @@ impl Workspace {
             return self.alert(why, window, cx);
         }
         let Some((path, at, _)) = self.lsp_here(cx) else { return };
-        let Some(server) = self.lsp.server.clone() else { return };
+        let Some(server) = self.active_language_server(cx) else { return };
         let word = self.word_at_cursor(cx).map(|w| w.2).unwrap_or_default();
         cx.spawn_in(window, async move |this, cx| {
             let prep = server.prepare_rename(&path, at).await;
@@ -470,15 +552,22 @@ impl Workspace {
         .detach();
     }
 
-    fn do_rename(&mut self, path: String, at: LspPos, old: String, new: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn do_rename(
+        &mut self,
+        path: String,
+        at: LspPos,
+        old: String,
+        new: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if new == old || new.is_empty() {
             return;
         }
-        let valid = new.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_') && new.chars().all(|c| c.is_alphanumeric() || c == '_');
-        if !valid {
-            return self.alert(format!("\"{new}\" isn't a valid Python name (letters, digits and _, not starting with a digit)."), window, cx);
+        let Some(server) = self.language_server(&path) else { return };
+        if let Some(error) = server.rename_error(&new) {
+            return self.alert(error, window, cx);
         }
-        let Some(server) = self.lsp.server.clone() else { return };
         cx.spawn_in(window, async move |this, cx| {
             let edits = server.rename(&path, at, &new).await;
             this.update_in(cx, |ws, window, cx| {
@@ -489,10 +578,18 @@ impl Workspace {
                 };
                 let count: usize = edits.values().map(Vec::len).sum();
                 let files = edits.len();
-                let closed: Vec<String> = edits.keys().filter(|p| !ws.docs.values().any(|d| same_path(d.read(cx).doc.path(), p))).cloned().collect();
+                let closed: Vec<String> = edits
+                    .keys()
+                    .filter(|p| !ws.docs.values().any(|d| same_path(d.read(cx).doc.path(), p)))
+                    .cloned()
+                    .collect();
                 let go = move |ws: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>| {
                     if let Err(e) = ws.apply_file_edits(&edits, window, cx) {
-                        ws.alert(format!("These files couldn't be changed, so the rename is incomplete there:\n{e}"), window, cx);
+                        ws.alert(
+                            format!("These files couldn't be changed, so the rename is incomplete there:\n{e}"),
+                            window,
+                            cx,
+                        );
                     }
                     ws.file_tree.update(cx, |t, cx| t.refresh_all(cx));
                 };

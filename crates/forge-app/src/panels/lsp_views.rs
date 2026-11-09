@@ -42,7 +42,10 @@ impl EventEmitter<OpenAt> for ReferencesPanel {}
 
 impl ReferencesPanel {
     pub fn new() -> Self {
-        Self { message: Some("Put the cursor on a name and press Shift+F12 to list everywhere it is used.".into()), ..Default::default() }
+        Self {
+            message: Some("Put the cursor on a name and press Shift+F12 to list everywhere it is used.".into()),
+            ..Default::default()
+        }
     }
 
     pub fn message(&mut self, text: impl Into<String>, cx: &mut Context<Self>) {
@@ -85,7 +88,15 @@ impl Render for ReferencesPanel {
         if let Some(m) = &self.message {
             rows.push(empty(&t, m));
         } else {
-            rows.push(div().px(px(10.0)).py(px(4.0)).text_color(t.fg_muted).text_size(px(12.0)).child(self.summary.clone()).into_any_element());
+            rows.push(
+                div()
+                    .px(px(10.0))
+                    .py(px(4.0))
+                    .text_color(t.fg_muted)
+                    .text_size(px(12.0))
+                    .child(self.summary.clone())
+                    .into_any_element(),
+            );
             for (gi, (rel, list)) in self.groups.iter().enumerate() {
                 rows.push(
                     div()
@@ -101,7 +112,10 @@ impl Render for ReferencesPanel {
                 for (fi, f) in list.iter().enumerate() {
                     let start = f.preview.char_indices().nth(f.hl.0).map_or(f.preview.len(), |(b, _)| b);
                     let end = f.preview.char_indices().nth(f.hl.1).map_or(f.preview.len(), |(b, _)| b);
-                    let styled = StyledText::new(f.preview.clone()).with_highlights([(start..end.max(start), HighlightStyle { background_color: Some(t.match_bg), color: Some(t.fg), ..Default::default() })]);
+                    let styled = StyledText::new(f.preview.clone()).with_highlights([(
+                        start..end.max(start),
+                        HighlightStyle { background_color: Some(t.match_bg), color: Some(t.fg), ..Default::default() },
+                    )]);
                     let (path, at) = (PathBuf::from(&f.location.path), f.location.start);
                     rows.push(
                         div()
@@ -116,14 +130,27 @@ impl Render for ReferencesPanel {
                             .cursor_pointer()
                             .hover(|s| s.bg(t.bg_hover))
                             .on_click(cx.listener(move |_, _, _, cx| cx.emit(OpenAt(path.clone(), at))))
-                            .child(div().min_w(px(28.0)).text_size(px(11.0)).text_color(t.fg_muted).child((f.location.start.line + 1).to_string()))
+                            .child(
+                                div()
+                                    .min_w(px(28.0))
+                                    .text_size(px(11.0))
+                                    .text_color(t.fg_muted)
+                                    .child((f.location.start.line + 1).to_string()),
+                            )
                             .child(div().text_color(t.fg_muted).child(styled))
                             .into_any_element(),
                     );
                 }
             }
         }
-        div().id("references").size_full().overflow_y_scroll().text_size(px(13.0)).text_color(t.fg).py(px(4.0)).children(rows)
+        div()
+            .id("references")
+            .size_full()
+            .overflow_y_scroll()
+            .text_size(px(13.0))
+            .text_color(t.fg)
+            .py(px(4.0))
+            .children(rows)
     }
 }
 
@@ -181,7 +208,17 @@ impl OutlinePanel {
                     .on_click(cx.listener(move |_, _, _, cx| cx.emit(OpenAt(PathBuf::new(), at))))
                     .child(div().w(px(14.0)).text_color(t.accent).child(icon))
                     .child(s.name.clone())
-                    .when_some(s.detail.clone(), |d, detail| d.child(div().min_w_0().overflow_hidden().text_ellipsis().text_size(px(11.0)).text_color(t.fg_muted).child(detail)))
+                    .when_some(s.detail.clone(), |d, detail| {
+                        d.child(
+                            div()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .text_size(px(11.0))
+                                .text_color(t.fg_muted)
+                                .child(detail),
+                        )
+                    })
                     .into_any_element(),
             );
             self.rows(&s.children, depth + 1, t, out, cx);
@@ -201,7 +238,14 @@ impl Render for OutlinePanel {
                 self.rows(&symbols, 0, &t, &mut rows, cx);
             }
         }
-        div().id("outline").size_full().overflow_y_scroll().text_size(px(13.0)).text_color(t.fg).py(px(4.0)).children(rows)
+        div()
+            .id("outline")
+            .size_full()
+            .overflow_y_scroll()
+            .text_size(px(13.0))
+            .text_color(t.fg)
+            .py(px(4.0))
+            .children(rows)
     }
 }
 
@@ -239,7 +283,11 @@ fn key(i: &CallItem) -> String {
 
 impl CallsPanel {
     pub fn new() -> Self {
-        Self { incoming: true, message: Some("Put the cursor on a function and press Shift+Alt+H to see who calls it.".into()), ..Default::default() }
+        Self {
+            incoming: true,
+            message: Some("Put the cursor on a function and press Shift+Alt+H to see who calls it.".into()),
+            ..Default::default()
+        }
     }
 
     pub fn message(&mut self, text: impl Into<String>, cx: &mut Context<Self>) {
@@ -258,7 +306,15 @@ impl CallsPanel {
 
     fn reset_root(&mut self, item: CallItem, cx: &mut Context<Self>) {
         self.generation += 1;
-        self.root = Some(CallNode { item, at: Vec::new(), parent_path: None, expanded: false, loading: false, children: None, recursive: false });
+        self.root = Some(CallNode {
+            item,
+            at: Vec::new(),
+            parent_path: None,
+            expanded: false,
+            loading: false,
+            children: None,
+            recursive: false,
+        });
         self.toggle(&[], cx);
     }
 
@@ -311,7 +367,15 @@ impl CallsPanel {
                             .into_iter()
                             .map(|(item, at)| {
                                 let recursive = seen.contains(&key(&item));
-                                CallNode { item, at, parent_path: Some(parent.clone()), expanded: false, loading: false, children: None, recursive }
+                                CallNode {
+                                    item,
+                                    at,
+                                    parent_path: Some(parent.clone()),
+                                    expanded: false,
+                                    loading: false,
+                                    children: None,
+                                    recursive,
+                                }
                             })
                             .collect(),
                     );
@@ -326,12 +390,27 @@ impl CallsPanel {
     fn rows(&self, node: &CallNode, path: Vec<usize>, t: &Theme, out: &mut Vec<AnyElement>, cx: &mut Context<Self>) {
         let depth = path.len();
         let (icon, _) = symbol_kind(node.item.kind);
-        let twisty = if node.recursive || depth >= MAX_DEPTH { " " } else if node.expanded { "▾" } else { "▸" };
-        let where_ = format!("{}{}:{}", node.item.detail.as_ref().map(|d| format!("{d}  ")).unwrap_or_default(), node.item.path.rsplit(['/', '\\']).next().unwrap_or(""), node.item.name_start.line + 1);
+        let twisty = if node.recursive || depth >= MAX_DEPTH {
+            " "
+        } else if node.expanded {
+            "▾"
+        } else {
+            "▸"
+        };
+        let where_ = format!(
+            "{}{}:{}",
+            node.item.detail.as_ref().map(|d| format!("{d}  ")).unwrap_or_default(),
+            node.item.path.rsplit(['/', '\\']).next().unwrap_or(""),
+            node.item.name_start.line + 1
+        );
         let (p1, p2) = (path.clone(), path.clone());
         let (item_path, item_at) = (PathBuf::from(&node.item.path), node.item.name_start);
         let site = node.at.first().copied().map(|a| {
-            let file = if self.incoming { node.item.path.clone() } else { node.parent_path.clone().unwrap_or_else(|| node.item.path.clone()) };
+            let file = if self.incoming {
+                node.item.path.clone()
+            } else {
+                node.parent_path.clone().unwrap_or_else(|| node.item.path.clone())
+            };
             (PathBuf::from(file), a, node.at.len())
         });
         out.push(
@@ -365,7 +444,15 @@ impl CallsPanel {
                 )
                 .child(div().w(px(14.0)).text_color(t.accent).child(icon))
                 .child(format!("{}{}", node.item.name, if node.recursive { " (recursive)" } else { "" }))
-                .child(div().min_w_0().overflow_hidden().text_ellipsis().text_size(px(11.0)).text_color(t.fg_muted).child(where_))
+                .child(
+                    div()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .text_size(px(11.0))
+                        .text_color(t.fg_muted)
+                        .child(where_),
+                )
                 .when_some(site, |d, (file, at, n)| {
                     d.child(
                         div()
@@ -387,7 +474,13 @@ impl CallsPanel {
             return;
         }
         match &node.children {
-            None => out.push(div().pl(px(24.0 + (depth + 1) as f32 * 16.0)).text_color(t.fg_muted).child("Loading…").into_any_element()),
+            None => out.push(
+                div()
+                    .pl(px(24.0 + (depth + 1) as f32 * 16.0))
+                    .text_color(t.fg_muted)
+                    .child("Loading…")
+                    .into_any_element(),
+            ),
             Some(c) if c.is_empty() => out.push(
                 div()
                     .pl(px(24.0 + (depth + 1) as f32 * 16.0))
@@ -413,7 +506,13 @@ impl Render for CallsPanel {
         if let Some(m) = &self.message {
             rows.push(empty(&t, m));
         }
-        let title = self.root.as_ref().map(|r| if self.incoming { format!("Who calls {}", r.item.name) } else { format!("What {} calls", r.item.name) });
+        let title = self.root.as_ref().map(|r| {
+            if self.incoming {
+                format!("Who calls {}", r.item.name)
+            } else {
+                format!("What {} calls", r.item.name)
+            }
+        });
         if let Some(root) = &self.root {
             let mut out = Vec::new();
             self.rows(root, Vec::new(), &t, &mut out, cx);

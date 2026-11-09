@@ -373,6 +373,13 @@ impl gpui_kit::Element for EditorElement {
             let num_shaped = shape(number.clone(), &[plain_run(number.len(), color)]);
             let num_x = gutter_right - FOLD_MARK_W - GUTTER_PAD - f32::from(num_shaped.width);
             gutter.push((num_shaped, point(px(num_x), px(y))));
+            if let Some((_, enabled)) = self.editor.read(cx).debug_lines.iter().find(|(l, _)| l == line) {
+                let mark = if *enabled { "●" } else { "○" };
+                gutter.push((shape(mark.into(), &[plain_run(mark.len(), theme.err)]), point(px(left), px(y))));
+            }
+            if self.editor.read(cx).debug_stopped == Some(*line) {
+                gutter.push((shape("▶".into(), &[plain_run("▶".len(), theme.warn)]), point(px(left + 10.0), px(y))));
+            }
             if lightbulb == Some(*line) {
                 let bulb = shape("💡".into(), &[plain_run("💡".len(), theme.fg)]);
                 gutter.push((bulb, point(px(left), px(y))));
@@ -437,7 +444,10 @@ impl gpui_kit::Element for EditorElement {
                 let x0 = x_of(r, s.col);
                 let x1 = if e.line == s.line { x_of(r, e.col) } else { text_left + f32::from(r.shaped.width) };
                 if x1 > x0 {
-                    back.push(fill(Bounds::new(point(px(x0), px(r.y)), size(px(x1 - x0), line_height)), theme.highlight));
+                    back.push(fill(
+                        Bounds::new(point(px(x0), px(r.y)), size(px(x1 - x0), line_height)),
+                        theme.highlight,
+                    ));
                     if *write {
                         back.push(fill(
                             Bounds::new(point(px(x0), px(r.y) + line_height - px(2.0)), size(px(x1 - x0), px(2.0))),
@@ -458,7 +468,8 @@ impl gpui_kit::Element for EditorElement {
             };
             for r in row_layouts.iter().filter(|r| r.line >= d.start.line && r.line <= d.end.line) {
                 let x0 = if r.line == d.start.line { x_of(r, d.start.col) } else { text_left };
-                let mut x1 = if r.line == d.end.line { x_of(r, d.end.col) } else { text_left + f32::from(r.shaped.width) };
+                let mut x1 =
+                    if r.line == d.end.line { x_of(r, d.end.col) } else { text_left + f32::from(r.shaped.width) };
                 // An empty range (end of line) still shows a short mark.
                 if x1 - x0 < 4.0 {
                     x1 = x0 + char_width.max(4.0);
@@ -654,7 +665,11 @@ impl gpui_kit::Element for EditorElement {
                 let _ = ph.paint(origin, line_height, TextAlign::Left, None, window, cx);
             }
             for (origin, width, color) in prepaint.squiggles.drain(..) {
-                window.paint_underline(origin, width, &gpui_kit::UnderlineStyle { thickness: px(1.0), color: Some(color), wavy: true });
+                window.paint_underline(
+                    origin,
+                    width,
+                    &gpui_kit::UnderlineStyle { thickness: px(1.0), color: Some(color), wavy: true },
+                );
             }
             for q in prepaint.quads_front.drain(..) {
                 window.paint_quad(q);

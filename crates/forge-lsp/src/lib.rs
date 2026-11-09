@@ -8,4 +8,5 @@ pub mod jsonrpc;
 pub mod navigation;
 pub mod process;
 pub mod server;
+pub mod services;
 pub mod uri;

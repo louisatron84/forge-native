@@ -19,7 +19,8 @@ pub struct Commit {
 pub const LOG_FORMAT: &str = "%H%x00%P%x00%an%x00%at%x00%D%x00%s%x1e";
 
 pub fn parse_log(out: &str) -> Vec<Commit> {
-    let is_sha = |s: &str| (7..=64).contains(&s.len()) && s.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase());
+    let is_sha =
+        |s: &str| (7..=64).contains(&s.len()) && s.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase());
     let mut commits = Vec::new();
     for rec in out.split('\x1e') {
         let r = rec.trim_start();
@@ -178,7 +179,14 @@ pub fn parse_blame(out: &str) -> Vec<BlameLine> {
 /// "3 days ago", "2 months ago", "just now".
 pub fn time_ago(seconds: i64, now_seconds: i64) -> String {
     let s = (now_seconds - seconds).max(0);
-    const UNITS: [(i64, &str); 6] = [(31_536_000, "year"), (2_592_000, "month"), (604_800, "week"), (86_400, "day"), (3_600, "hour"), (60, "minute")];
+    const UNITS: [(i64, &str); 6] = [
+        (31_536_000, "year"),
+        (2_592_000, "month"),
+        (604_800, "week"),
+        (86_400, "day"),
+        (3_600, "hour"),
+        (60, "minute"),
+    ];
     for (size, name) in UNITS {
         let n = s / size;
         if n >= 1 {
@@ -243,7 +251,14 @@ pub fn find_conflicts<S: AsRef<str>>(lines: &[S]) -> Vec<Conflict> {
             separator.get_or_insert(i);
         } else if marker(l, ">>>>>>>") {
             if let Some(sep) = *separator {
-                out.push(Conflict { start: *start, base: *base, separator: sep, end: i, current_label: current.clone(), incoming_label: label(l) });
+                out.push(Conflict {
+                    start: *start,
+                    base: *base,
+                    separator: sep,
+                    end: i,
+                    current_label: current.clone(),
+                    incoming_label: label(l),
+                });
                 open = None;
             }
         }
@@ -253,7 +268,8 @@ pub fn find_conflicts<S: AsRef<str>>(lines: &[S]) -> Vec<Conflict> {
 
 /// The lines that replace a conflict block (start..=end) for a choice.
 pub fn resolve_conflict<S: AsRef<str>>(lines: &[S], c: &Conflict, choice: Resolution) -> Vec<String> {
-    let take = |from: usize, to: usize| lines[from.min(to)..to].iter().map(|l| l.as_ref().to_owned()).collect::<Vec<_>>();
+    let take =
+        |from: usize, to: usize| lines[from.min(to)..to].iter().map(|l| l.as_ref().to_owned()).collect::<Vec<_>>();
     let current = take(c.start + 1, c.base.unwrap_or(c.separator));
     let incoming = take(c.separator + 1, c.end);
     match choice {
@@ -291,7 +307,14 @@ mod tests {
                     refs: vec!["HEAD -> main".into(), "origin/main".into()],
                     subject: "Merge branch x".into()
                 },
-                Commit { sha: "bbbbbbb2".into(), parents: vec![], author: "Bob".into(), time: 1_690_000_000, refs: vec![], subject: "first: with, commas".into() },
+                Commit {
+                    sha: "bbbbbbb2".into(),
+                    parents: vec![],
+                    author: "Bob".into(),
+                    time: 1_690_000_000,
+                    refs: vec![],
+                    subject: "first: with, commas".into()
+                },
             ]
         );
     }
@@ -315,7 +338,10 @@ mod tests {
     fn graph_opens_a_column_for_a_merged_branch_and_joins_it_back() {
         // m merges f into main: m(b, f), f(a), b(a), a
         let rows = graph_layout(&[c("m", &["b", "f"]), c("f", &["a"]), c("b", &["a"]), c("a", &[])]);
-        assert_eq!((rows[0].col, rows[0].parent_cols.clone(), rows[0].after.clone()), (0, vec![0, 1], lanes(&["b", "f"])));
+        assert_eq!(
+            (rows[0].col, rows[0].parent_cols.clone(), rows[0].after.clone()),
+            (0, vec![0, 1], lanes(&["b", "f"]))
+        );
         assert_eq!((rows[1].col, rows[1].after.clone()), (1, lanes(&["b", "a"])));
         // b also leads to a: the side column (also waiting for a) joins at a.
         assert_eq!((rows[2].col, rows[2].after.clone()), (0, lanes(&["a", "a"])));
@@ -346,7 +372,10 @@ mod tests {
         .join("\n");
         let b = parse_blame(&out);
         assert_eq!(b.len(), 3);
-        assert_eq!((b[0].sha.as_str(), b[0].author.as_str(), b[0].summary.as_str(), b[0].uncommitted), (a.as_str(), "Ada", "First commit", false));
+        assert_eq!(
+            (b[0].sha.as_str(), b[0].author.as_str(), b[0].summary.as_str(), b[0].uncommitted),
+            (a.as_str(), "Ada", "First commit", false)
+        );
         assert_eq!(b[0].time, 1_700_000_000);
         assert_eq!(b[1].sha, a);
         assert!(b[2].uncommitted);
@@ -384,8 +413,22 @@ mod tests {
         assert_eq!(
             find_conflicts(&LINES),
             vec![
-                Conflict { start: 1, base: Some(3), separator: 5, end: 8, current_label: "HEAD".into(), incoming_label: "feature".into() },
-                Conflict { start: 10, base: None, separator: 11, end: 13, current_label: "ours".into(), incoming_label: "theirs".into() },
+                Conflict {
+                    start: 1,
+                    base: Some(3),
+                    separator: 5,
+                    end: 8,
+                    current_label: "HEAD".into(),
+                    incoming_label: "feature".into()
+                },
+                Conflict {
+                    start: 10,
+                    base: None,
+                    separator: 11,
+                    end: 13,
+                    current_label: "ours".into(),
+                    incoming_label: "theirs".into()
+                },
             ]
         );
     }

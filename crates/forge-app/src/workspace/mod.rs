@@ -7,20 +7,25 @@ mod assist;
 mod chrome;
 mod code_tools;
 mod commands;
+mod debug;
 mod dock;
 mod editors;
+mod git;
 mod lsp;
 mod nav;
 mod pyenv;
 mod run;
+#[cfg(test)]
+mod tests;
+mod updates;
 
 use crate::app_state::{self, AppState};
 use crate::document::{Document, DocumentEvent};
 use crate::editor::{EditorEvent, EditorView};
 use crate::find_bar::{FindBar, FindOption};
 use crate::palette::{Choice, CommandItem, Palette, PaletteEvent};
-use crate::panels::lsp_views::{CallsPanel, OpenAt, OutlinePanel, ReferencesPanel};
 use crate::panels::files::{FileTree, FileTreeEvent};
+use crate::panels::lsp_views::{CallsPanel, OpenAt, OutlinePanel, ReferencesPanel};
 use crate::panels::output::OutputPanel;
 use crate::panels::problems::{ProblemsEvent, ProblemsPanel};
 use crate::panels::search::{SearchEvent, SearchPanel};
@@ -98,6 +103,13 @@ pub struct Workspace {
     pub(crate) editors: [Entity<EditorView>; 2],
     panels: HashMap<&'static str, AnyView>,
     pub(crate) file_tree: Entity<FileTree>,
+    pub(crate) git_panel: Entity<crate::panels::git::GitPanel>,
+    pub(crate) git_inspect: Entity<crate::panels::git_inspect::GitInspect>,
+    pub(crate) git: git::GitState,
+    pub(crate) debug: debug::DebugState,
+    pub(crate) debug_panel: Entity<crate::panels::debug::DebugPanel>,
+    update_poll: Option<Task<()>>,
+    pub(crate) release_notes: Option<forge_update::Release>,
     pub(crate) palette: Entity<Palette>,
     pub(crate) find_bar: Entity<FindBar>,
     pub(crate) settings_view: Entity<SettingsView>,
@@ -178,6 +190,9 @@ impl Workspace {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let editors = [cx.new(EditorView::new), cx.new(EditorView::new)];
         let file_tree = cx.new(FileTree::new);
+        let git_panel = cx.new(|cx| crate::panels::git::GitPanel::new(window, cx));
+        let git_inspect = cx.new(|_| crate::panels::git_inspect::GitInspect::default());
+        let debug_panel = cx.new(|cx| crate::panels::debug::DebugPanel::new(window, cx));
         let palette = cx.new(|cx| Palette::new(window, cx));
         let find_bar = cx.new(|cx| FindBar::new(window, cx));
         let settings_view = cx.new(|cx| SettingsView::new(window, cx));
@@ -196,11 +211,22 @@ impl Workspace {
             }));
         }
         subs.push(cx.subscribe_in(&file_tree, window, Self::on_tree_event));
+        subs.push(cx.subscribe_in(&git_panel, window, Self::on_git_event));
+        subs.push(cx.subscribe_in(&debug_panel, window, Self::on_debug_event));
+        subs.push(cx.subscribe_in(&git_inspect, window, Self::on_git_inspect));
+        subs.push(cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                this.file_tree.update(cx, |tree, _| tree.refresh_git());
+                this.refresh_git(cx);
+            }
+        }));
         subs.push(cx.subscribe_in(&output, window, Self::on_output_event));
         subs.push(cx.subscribe_in(&problems, window, |this, _, e: &ProblemsEvent, window, cx| match e {
             ProblemsEvent::Open(path, line, col16) => this.open_at_lsp(path.clone(), *line, *col16, window, cx),
         }));
-        subs.push(cx.subscribe_in(&references, window, |this, _, e: &OpenAt, window, cx| this.on_open_at(e, window, cx)));
+        subs.push(
+            cx.subscribe_in(&references, window, |this, _, e: &OpenAt, window, cx| this.on_open_at(e, window, cx)),
+        );
         subs.push(cx.subscribe_in(&outline, window, |this, _, e: &OpenAt, window, cx| this.on_open_at(e, window, cx)));
         subs.push(cx.subscribe_in(&calls, window, |this, _, e: &OpenAt, window, cx| this.on_open_at(e, window, cx)));
         subs.push(cx.subscribe_in(&search, window, |this, _, e: &SearchEvent, window, cx| match e {
@@ -258,6 +284,13 @@ impl Workspace {
             editors,
             panels: HashMap::new(),
             file_tree,
+            git_panel,
+            git_inspect,
+            git: git::GitState::default(),
+            debug: debug::DebugState::default(),
+            debug_panel,
+            update_poll: None,
+            release_notes: None,
             palette,
             find_bar,
             settings_view,
@@ -302,6 +335,7 @@ impl Workspace {
             ws.status_note(format!("Your settings file couldn't be read, so the defaults are used: {err}"), cx);
         }
         ws.sync_editors(window, cx);
+        ws.start_updates(cx);
         ws
     }
 
@@ -547,7 +581,13 @@ impl Workspace {
             EditorEvent::Hover(pos, at) => self.show_hover(group, *pos, *at, cx),
             EditorEvent::HoverEnd => self.hide_hover(cx),
             EditorEvent::Lightbulb(_) => self.quick_fix(window, cx),
-            EditorEvent::GutterClick(_) => {}
+            EditorEvent::GutterClick(line) => {
+                if let Some(doc) = self.editors[group].read(cx).document().cloned() {
+                    let path = doc.read(cx).doc.path().to_owned();
+                    self.debug.breakpoints.toggle(&path, *line);
+                    self.breakpoints_changed(&path, cx);
+                }
+            }
         }
     }
 
@@ -559,6 +599,8 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         match event {
+            FileTreeEvent::OpenFolder => self.open_folder_dialog(window, cx),
+            FileTreeEvent::NewProject => self.run_command("file.newFolder", window, cx),
             FileTreeEvent::Open(path) => self.open_path(path.clone(), window, cx),
             FileTreeEvent::Created { path, is_dir } => {
                 if !is_dir {
@@ -662,6 +704,10 @@ impl Workspace {
             return;
         }
         self.save_state_now(cx);
+        self.stop_debug(cx);
+        self.debug.breakpoints.saved.clear();
+        self.debug.watches.clear();
+        self.debug.filters.clear();
         self.close_all_docs(cx);
         self.stop_language_server(cx);
         self.external_diagnostics.clear();
@@ -680,6 +726,10 @@ impl Workspace {
         }
         let _ = app_state::state(cx).user.add_recent(&path_str);
         self.root = Some(folder.clone());
+        self.reset_git();
+        self.git_panel.update(cx, |p, cx| p.set_folder(true, cx));
+        self.git_inspect.update(cx, |p, _| p.open = false);
+        self.refresh_git(cx);
         self.load_project_settings(&folder, window, cx);
         self.run.config = None;
         self.run.last_task = None;
@@ -710,6 +760,10 @@ impl Workspace {
             self.sync_editors(window, cx);
             return;
         };
+        self.debug.breakpoints.load(state.breakpoints.clone());
+        self.debug.watches = state.watches.clone();
+        self.debug.filters = state.exception_filters.clone().unwrap_or_else(|| vec!["uncaught".into()]);
+        self.refresh_debug_panel(cx);
         self.restoring = true;
         let mut groups = Vec::new();
         let mut opened: Vec<(DocId, String)> = Vec::new();
@@ -852,8 +906,15 @@ impl Workspace {
         let id = self.next_doc;
         self.next_doc += 1;
         let sub = cx.subscribe(&doc, |this, doc, e: &DocumentEvent, cx| {
-            if let DocumentEvent::Edited { .. } = e {
+            if let DocumentEvent::Edited { changes, .. } = e {
                 let path = doc.read(cx).doc.path().to_owned();
+                let previous = this.debug.breakpoints.saved.clone();
+                for change in changes {
+                    this.debug.breakpoints.apply_change(&path, change);
+                }
+                if this.debug.breakpoints.saved != previous {
+                    this.breakpoints_changed(&path, cx);
+                }
                 this.lsp_doc_changed(&path, cx);
             }
             this.backup_soon(cx);
@@ -866,10 +927,13 @@ impl Workspace {
 
     /// Open a file in a tab of the focused group (or switch to it).
     pub fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.git_inspect.update(cx, |p, _| p.open = false);
         self.open_path_at(path, None, window, cx);
     }
 
     pub fn open_path_at(&mut self, path: PathBuf, line: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
+        self.git.diff = None;
+        self.git_inspect.update(cx, |p, _| p.open = false);
         let path_str = path.to_string_lossy().into_owned();
         if let Some(id) = self.find_doc(&path_str, cx) {
             self.tabs.show(id);
@@ -936,6 +1000,8 @@ impl Workspace {
 
     /// Show each group's active file in its editor, and update everything that follows the active file.
     pub(crate) fn after_tabs_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_completion(cx);
+        self.hide_hover(cx);
         self.sync_editors(window, cx);
         self.lsp_sync(window, cx);
         self.refresh_diagnostics(cx);
@@ -969,6 +1035,7 @@ impl Workspace {
                 None => e.clear(None, cx),
             });
         }
+        self.refresh_debug_markers(cx);
     }
 
     fn update_title(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1019,6 +1086,7 @@ impl Workspace {
 
     /// A file was saved: reload what it configures.
     fn after_save(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.refresh_git(cx);
         self.lsp_did_save(path, cx);
         if let (Some(p), Some(root)) = (self.project_settings_path.clone(), self.root.clone()) {
             if same_path(path, &p.to_string_lossy()) {
@@ -1119,6 +1187,7 @@ impl Workspace {
         self.save_layouts_now(cx);
         let dirty: Vec<DocId> = self.tabs.docs().into_iter().filter(|d| self.is_dirty(*d, cx)).collect();
         if dirty.is_empty() || self.closing {
+            self.stop_debug(cx);
             return true;
         }
         let names: Vec<String> =
@@ -1142,6 +1211,7 @@ impl Workspace {
                     _ => false,
                 };
                 if close {
+                    ws.stop_debug(cx);
                     ws.closing = true;
                     // Thrown-away changes don't need their crash backups.
                     for id in &dirty {
@@ -1162,6 +1232,27 @@ impl Workspace {
 
     /// A file or folder was renamed on disk: point the affected tabs at the new paths.
     fn path_renamed(&mut self, old: &Path, new: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        let old_breakpoint_paths: Vec<String> = self
+            .debug
+            .breakpoints
+            .saved
+            .iter()
+            .filter(|b| is_inside(&b.path, &old.to_string_lossy()))
+            .map(|b| b.path.clone())
+            .collect();
+        self.debug.breakpoints.renamed(&old.to_string_lossy(), &new.to_string_lossy());
+        let new_breakpoint_paths: Vec<String> = self
+            .debug
+            .breakpoints
+            .saved
+            .iter()
+            .filter(|b| is_inside(&b.path, &new.to_string_lossy()))
+            .map(|b| b.path.clone())
+            .collect();
+        for path in old_breakpoint_paths.into_iter().chain(new_breakpoint_paths) {
+            self.breakpoints_changed(&path, cx);
+        }
+        self.refresh_debug_panel(cx);
         let (old_s, new_s) = (old.to_string_lossy().into_owned(), new.to_string_lossy().into_owned());
         for doc in self.docs.values() {
             let path = doc.read(cx).doc.path().to_owned();
@@ -1208,6 +1299,8 @@ impl Workspace {
                     ws.forget_doc(id, cx);
                 }
                 ws.file_tree.update(cx, |t, cx| t.deleted(&path, window, cx));
+                ws.debug.breakpoints.remove_under(&p);
+                ws.refresh_debug_panel(cx);
                 ws.after_tabs_changed(window, cx);
             })
             .ok();
@@ -1247,6 +1340,9 @@ impl Workspace {
             task: self.tasks.current().to_owned(),
             terminals: self.terminal.read(cx).shell_ids(),
             run_config: self.run.config.clone(),
+            breakpoints: self.debug.breakpoints.saved.clone(),
+            watches: self.debug.watches.clone(),
+            exception_filters: Some(self.debug.filters.clone()),
             ..Default::default()
         }
     }
@@ -1391,16 +1487,33 @@ impl Workspace {
     }
 
     /// Open a file at a language server position (UTF-16 column).
-    pub(crate) fn open_at_lsp(&mut self, path: PathBuf, line: usize, col16: usize, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_at_lsp(
+        &mut self,
+        path: PathBuf,
+        line: usize,
+        col16: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.open_path(path, window, cx);
         let ed = self.editors[self.tabs.active_group.min(1)].clone();
-        let col = ed.read(cx).document().map(|d| forge_text::chars::col_from_utf16(d.read(cx).doc.buffer.line(line), col16)).unwrap_or(col16);
+        let col = ed
+            .read(cx)
+            .document()
+            .map(|d| forge_text::chars::col_from_utf16(d.read(cx).doc.buffer.line(line), col16))
+            .unwrap_or(col16);
         ed.update(cx, |e, cx| e.go_to(line, col, cx));
         window.focus(&ed.focus_handle(cx), cx);
     }
 
     /// The view of a panel (created the first time it's shown).
     pub(crate) fn panel_view(&mut self, id: &'static str, cx: &mut Context<Self>) -> AnyView {
+        if id == "debug" {
+            return self.debug_panel.clone().into();
+        }
+        if id == "git" {
+            return self.git_panel.clone().into();
+        }
         if id == "files" {
             return self.file_tree.clone().into();
         }

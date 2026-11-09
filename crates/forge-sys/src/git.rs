@@ -6,7 +6,10 @@
 //! it from a background thread. Replaces `src/main/gitOps.ts` and `git.ts`.
 
 use crate::process::{run_captured, Captured};
-use forge_core::git::{build_status_map, is_valid_branch_name, parse_branches, parse_porcelain, parse_status_v2, Branch, RepoStatus, StatusMap, BRANCH_FORMAT};
+use forge_core::git::{
+    build_status_map, is_valid_branch_name, parse_branches, parse_porcelain, parse_status_v2, Branch, RepoStatus,
+    StatusMap, BRANCH_FORMAT,
+};
 use forge_core::history::{parse_blame, parse_log, BlameLine, Commit, LOG_FORMAT};
 use std::path::Path;
 use std::time::Duration;
@@ -32,7 +35,11 @@ fn result(r: Captured) -> GitResult {
         return GitResult { ok: true, output, error: None };
     }
     if r.not_found {
-        return GitResult { ok: false, output: String::new(), error: Some("Git is not installed (or not on PATH).".into()) };
+        return GitResult {
+            ok: false,
+            output: String::new(),
+            error: Some("Git is not installed (or not on PATH).".into()),
+        };
     }
     let text = if r.stderr.trim().is_empty() { r.stdout.trim() } else { r.stderr.trim() };
     let text = if text.is_empty() { "git failed" } else { text };
@@ -91,6 +98,22 @@ pub fn file_diff(root: &str, path: &str, staged: bool) -> GitResult {
     result(r)
 }
 
+/// Let Git produce new-file patches, including quoted paths, binary detection
+/// and the no-final-newline marker. `--no-index` returns 1 for a difference.
+pub fn untracked_diff(root: &str, path: &str) -> GitResult {
+    let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
+    let captured = run_git(
+        root,
+        &["-c", "core.quotepath=false", "diff", "--no-index", "--no-color", "--no-ext-diff", "--", null, path],
+        "",
+    );
+    if matches!(captured.code, Some(0 | 1)) && !captured.failed {
+        GitResult { ok: true, output: captured.stdout, error: None }
+    } else {
+        result(captured)
+    }
+}
+
 pub fn stage(root: &str, paths: &[&str]) -> GitResult {
     let mut args = vec!["add", "-A", "--"];
     args.extend(paths);
@@ -143,13 +166,21 @@ pub fn commit(root: &str, message: &str, amend: bool, all: bool) -> GitResult {
 
 pub fn last_commit_message(root: &str) -> String {
     let r = run_git(root, &["log", "-1", "--format=%B"], "");
-    if r.ok() { r.stdout.trim_end().to_owned() } else { String::new() }
+    if r.ok() {
+        r.stdout.trim_end().to_owned()
+    } else {
+        String::new()
+    }
 }
 
 pub fn branches(root: &str) -> Vec<Branch> {
     let format = format!("--format={BRANCH_FORMAT}");
     let r = run_git(root, &["for-each-ref", "--sort=-committerdate", &format, "refs/heads", "refs/remotes"], "");
-    if r.ok() { parse_branches(&r.stdout) } else { Vec::new() }
+    if r.ok() {
+        parse_branches(&r.stdout)
+    } else {
+        Vec::new()
+    }
 }
 
 /// Switch to a branch; a remote one (origin/x) gets a local tracking branch.
@@ -206,7 +237,8 @@ pub fn init(folder: &str) -> GitResult {
 /// Commits, newest first (topological, so the graph draws cleanly). `all`
 /// includes every branch; `path` limits it to one file's history (following renames).
 pub fn log(root: &str, all: bool, path: Option<&str>, limit: usize, skip: usize) -> Result<Vec<Commit>, String> {
-    let (format, n, skip) = (format!("--format={LOG_FORMAT}"), format!("-n{}", limit.clamp(1, 2000)), format!("--skip={skip}"));
+    let (format, n, skip) =
+        (format!("--format={LOG_FORMAT}"), format!("-n{}", limit.clamp(1, 2000)), format!("--skip={skip}"));
     let mut args = vec!["-c", "core.quotepath=false", "log", "--topo-order", &format, &n, &skip];
     if all {
         args.push("--all");
@@ -238,7 +270,11 @@ pub fn commit_details(root: &str, sha: &str) -> Result<(String, Vec<CommitFile>)
     if !is_sha(sha) {
         return Err("bad commit id".into());
     }
-    let r = run_git(root, &["-c", "core.quotepath=false", "show", "--no-color", "--format=%B%x00", "--name-status", "-z", "-M", sha], "");
+    let r = run_git(
+        root,
+        &["-c", "core.quotepath=false", "show", "--no-color", "--format=%B%x00", "--name-status", "-z", "-M", sha],
+        "",
+    );
     if !r.ok() {
         return Err(r.stderr.trim().to_owned());
     }
@@ -248,17 +284,27 @@ pub fn commit_details(root: &str, sha: &str) -> Result<(String, Vec<CommitFile>)
     let mut i = 0;
     while i < parts.len() {
         let status = parts[i].trim();
-        let valid = !status.is_empty() && status.as_bytes()[0].is_ascii_uppercase() && status[1..].chars().all(|c| c.is_ascii_digit());
+        let valid = !status.is_empty()
+            && status.as_bytes()[0].is_ascii_uppercase()
+            && status[1..].chars().all(|c| c.is_ascii_digit());
         if !valid {
             i += 1;
             continue;
         }
         let letter = status[..1].to_owned();
         if letter == "R" || letter == "C" {
-            files.push(CommitFile { status: letter, from: parts.get(i + 1).map(|s| (*s).to_owned()), path: parts.get(i + 2).copied().unwrap_or("").to_owned() });
+            files.push(CommitFile {
+                status: letter,
+                from: parts.get(i + 1).map(|s| (*s).to_owned()),
+                path: parts.get(i + 2).copied().unwrap_or("").to_owned(),
+            });
             i += 3;
         } else {
-            files.push(CommitFile { status: status.to_owned(), path: parts.get(i + 1).copied().unwrap_or("").to_owned(), from: None });
+            files.push(CommitFile {
+                status: status.to_owned(),
+                path: parts.get(i + 1).copied().unwrap_or("").to_owned(),
+                from: None,
+            });
             i += 2;
         }
     }
@@ -270,7 +316,23 @@ pub fn commit_file_diff(root: &str, sha: &str, path: &str) -> GitResult {
     if !is_sha(sha) {
         return failed("bad commit id");
     }
-    let r = run_git(root, &["-c", "core.quotepath=false", "show", "--no-color", "--no-ext-diff", "--format=", "-M", "--first-parent", sha, "--", path], "");
+    let r = run_git(
+        root,
+        &[
+            "-c",
+            "core.quotepath=false",
+            "show",
+            "--no-color",
+            "--no-ext-diff",
+            "--format=",
+            "-M",
+            "--first-parent",
+            sha,
+            "--",
+            path,
+        ],
+        "",
+    );
     if r.ok() {
         return GitResult { ok: true, output: r.stdout, error: None };
     }
@@ -298,6 +360,25 @@ mod tests {
 
     fn has_git() -> bool {
         !run_captured("git", &["--version".into()], &std::env::temp_dir(), &[], "", Duration::from_secs(20)).not_found
+    }
+
+    #[test]
+    fn an_untracked_file_patch_preserves_spaces_and_no_final_newline() {
+        if !has_git() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_string_lossy().into_owned();
+        assert!(init(&root).ok);
+        std::fs::write(dir.path().join("new file.py"), "print(1)").unwrap();
+        let diff = untracked_diff(&root, "new file.py");
+        assert!(diff.ok, "{:?}", diff.error);
+        assert!(diff.output.contains("No newline at end of file"));
+        let files = parse_diff(&diff.output);
+        assert_eq!(files[0].hunks.len(), 1);
+        let staged = apply_patch(&root, &hunk_patch(&files[0], &files[0].hunks[0]), true, false);
+        assert!(staged.ok, "{:?}", staged.error);
+        assert!(repo_status(&root).unwrap().1.staged.iter().any(|f| f.path == "new file.py"));
     }
 
     #[test]

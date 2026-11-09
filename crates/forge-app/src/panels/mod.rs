@@ -1,7 +1,10 @@
 //! The panels the dock arranges (Files, Search, Terminal...): their titles,
 //! and a stand-in for panels not ported to the native app yet.
 
+pub mod debug;
 pub mod files;
+pub mod git;
+pub mod git_inspect;
 pub mod lsp_views;
 pub mod output;
 pub mod problems;

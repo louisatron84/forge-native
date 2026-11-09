@@ -39,7 +39,14 @@ impl Captured {
 
 /// Run `program args` in `cwd` with `input` on stdin and extra environment
 /// variables; killed after `timeout`.
-pub fn run_captured(program: &str, args: &[String], cwd: &Path, env: &[(&str, &str)], input: &str, timeout: Duration) -> Captured {
+pub fn run_captured(
+    program: &str,
+    args: &[String],
+    cwd: &Path,
+    env: &[(&str, &str)],
+    input: &str,
+    timeout: Duration,
+) -> Captured {
     let mut command = Command::new(program);
     command.args(args).current_dir(cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     for (k, v) in env {
@@ -48,7 +55,9 @@ pub fn run_captured(program: &str, args: &[String], cwd: &Path, env: &[(&str, &s
     hide_window(&mut command);
     let mut child = match command.spawn() {
         Ok(c) => c,
-        Err(e) => return Captured { failed: true, not_found: e.kind() == std::io::ErrorKind::NotFound, ..Default::default() },
+        Err(e) => {
+            return Captured { failed: true, not_found: e.kind() == std::io::ErrorKind::NotFound, ..Default::default() }
+        }
     };
     // Feed stdin and drain both pipes on threads, so a large output can't block it.
     let mut stdin = child.stdin.take();
@@ -82,7 +91,13 @@ pub fn run_captured(program: &str, args: &[String], cwd: &Path, env: &[(&str, &s
         }
     };
     let _ = writer.join();
-    Captured { code, stdout: out.join().unwrap_or_default(), stderr: err.join().unwrap_or_default(), failed: false, not_found: false }
+    Captured {
+        code,
+        stdout: out.join().unwrap_or_default(),
+        stderr: err.join().unwrap_or_default(),
+        failed: false,
+        not_found: false,
+    }
 }
 
 #[cfg(test)]
@@ -98,7 +113,14 @@ mod tests {
     #[test]
     fn input_goes_in_and_output_comes_back() {
         // git is everywhere Forge's own tests run; it echoes its stdin with hash-object.
-        let r = run_captured("git", &["hash-object".into(), "--stdin".into()], &std::env::temp_dir(), &[], "hello\n", Duration::from_secs(20));
+        let r = run_captured(
+            "git",
+            &["hash-object".into(), "--stdin".into()],
+            &std::env::temp_dir(),
+            &[],
+            "hello\n",
+            Duration::from_secs(20),
+        );
         if r.not_found {
             return eprintln!("git isn't installed: skipped");
         }

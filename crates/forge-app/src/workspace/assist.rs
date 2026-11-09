@@ -6,7 +6,9 @@
 
 use super::Workspace;
 use crate::theme::{Theme, CODE_FONT};
-use forge_lsp::completion::{filter_completions, hover_sections, kind_icon, word_start_at, CompletionItem, HoverSection};
+use forge_lsp::completion::{
+    filter_completions, hover_sections, kind_icon, word_start_at, CompletionItem, HoverSection,
+};
 use forge_lsp::navigation::{FileEdits, TextEdit};
 use forge_text::Pos;
 use gpui_kit::{
@@ -38,9 +40,9 @@ pub(crate) struct CompletionState {
 #[derive(Default)]
 pub(crate) struct HoverState {
     at: Option<Point<Pixels>>,
-    sections: Vec<HoverSection>,
+    pub(super) sections: Vec<HoverSection>,
     problems: Vec<(u8, String)>,
-    generation: u64,
+    pub(super) generation: u64,
     task: Option<Task<()>>,
 }
 
@@ -49,18 +51,18 @@ fn is_word_char(c: char) -> bool {
 }
 
 impl Workspace {
-    fn active_python_doc(&self, cx: &gpui_kit::App) -> Option<(usize, String)> {
+    fn active_language_doc(&self, cx: &gpui_kit::App) -> Option<(usize, String)> {
         let g = self.tabs.active_group.min(1);
         let doc = self.editors[g].read(cx).document()?.clone();
         let d = &doc.read(cx).doc;
-        (d.mode().language.server == Some("pyright")).then(|| (g, d.path().to_owned()))
+        self.language_server(d.path()).filter(|_| !d.large).map(|_| (g, d.path().to_owned()))
     }
 
     // ---------- autocomplete ----------
 
     /// The user typed `text` in the editor.
     pub(crate) fn completion_on_type(&mut self, text: &str, cx: &mut Context<Self>) {
-        let Some((group, _)) = self.active_python_doc(cx) else { return };
+        let Some((group, _)) = self.active_language_doc(cx) else { return };
         let Some(last) = text.chars().last() else { return };
         let single_word = text.chars().count() == 1 && is_word_char(last);
         if self.completion.open {
@@ -94,8 +96,8 @@ impl Workspace {
 
     /// Ctrl+Space, or typing.
     pub(crate) fn request_completion(&mut self, trigger: Option<char>, cx: &mut Context<Self>) {
-        let Some((group, path)) = self.active_python_doc(cx) else { return };
-        let Some(server) = self.lsp.server.clone() else { return };
+        let Some((group, path)) = self.active_language_doc(cx) else { return };
+        let Some(server) = self.language_server(&path) else { return };
         self.lsp_flush(cx);
         let ed = self.editors[group].clone();
         let Some(doc) = ed.read(cx).document().cloned() else { return };
@@ -145,8 +147,10 @@ impl Workspace {
         if word_start_at(&line, pos.col) != self.completion.start_col {
             return self.close_completion(cx);
         }
-        let prefix: String = line.chars().skip(self.completion.start_col).take(pos.col - self.completion.start_col).collect();
-        let shown: Vec<CompletionItem> = filter_completions(&self.completion.items, &prefix).into_iter().take(MAX_SHOWN).collect();
+        let prefix: String =
+            line.chars().skip(self.completion.start_col).take(pos.col - self.completion.start_col).collect();
+        let shown: Vec<CompletionItem> =
+            filter_completions(&self.completion.items, &prefix).into_iter().take(MAX_SHOWN).collect();
         // Nothing left, or the only suggestion is exactly what's already typed: nothing to offer.
         let only_typed = shown.len() == 1 && shown[0].insert_text.as_deref().unwrap_or(&shown[0].label) == prefix;
         if shown.is_empty() || only_typed {
@@ -187,7 +191,7 @@ impl Workspace {
         if item.detail.is_some() || item.documentation.is_some() {
             return;
         }
-        let Some(server) = self.lsp.server.clone() else { return };
+        let Some(server) = self.language_server(&self.completion.path) else { return };
         let generation = self.completion.generation;
         let index = self.completion.selected;
         self.completion.resolve_task = Some(cx.spawn(async move |this, cx| {
@@ -218,7 +222,10 @@ impl Workspace {
             let line = d.buffer.line(pos.line).to_owned();
             match &item.text_edit {
                 Some((s, _, t)) => (super::lsp::from_lsp(d.buffer.line(s.line), *s), t.clone()),
-                None => (Pos::new(pos.line, word_start_at(&line, pos.col)), item.insert_text.clone().unwrap_or_else(|| item.label.clone())),
+                None => (
+                    Pos::new(pos.line, word_start_at(&line, pos.col)),
+                    item.insert_text.clone().unwrap_or_else(|| item.label.clone()),
+                ),
             }
         };
         ed.update(cx, |e, cx| {
@@ -228,16 +235,17 @@ impl Workspace {
             })
         });
         let path = doc.read(cx).doc.path().to_owned();
-        let apply_extra = move |ws: &mut Workspace, edits: Vec<TextEdit>, window: &mut Window, cx: &mut Context<Workspace>| {
-            if !edits.is_empty() {
-                let _ = ws.apply_file_edits(&FileEdits::from([(path.clone(), edits)]), window, cx);
-            }
-        };
+        let apply_extra =
+            move |ws: &mut Workspace, edits: Vec<TextEdit>, window: &mut Window, cx: &mut Context<Workspace>| {
+                if !edits.is_empty() {
+                    let _ = ws.apply_file_edits(&FileEdits::from([(path.clone(), edits)]), window, cx);
+                }
+            };
         if !item.additional_edits.is_empty() || !item.auto_import {
             return apply_extra(self, item.additional_edits.clone(), window, cx);
         }
         // An auto-import's import line comes with the full item.
-        let Some(server) = self.lsp.server.clone() else { return };
+        let Some(server) = self.active_language_server(cx) else { return };
         cx.spawn_in(window, async move |this, cx| {
             let full = server.resolve_completion(item).await;
             this.update_in(cx, |ws, window, cx| apply_extra(ws, full.additional_edits, window, cx)).ok();
@@ -297,7 +305,9 @@ impl Workspace {
                 .on_click(cx.listener(move |ws, _, window, cx| ws.accept_completion(i, window, cx)))
                 .child(div().w(px(14.0)).text_color(t.accent).child(icon))
                 .child(div().child(item.label.clone()))
-                .when(item.auto_import, |d| d.child(div().text_size(px(11.0)).text_color(t.fg_muted).child("auto-import")))
+                .when(item.auto_import, |d| {
+                    d.child(div().text_size(px(11.0)).text_color(t.fg_muted).child("auto-import"))
+                })
         });
         let selected = self.completion.shown.get(self.completion.selected);
         let details = selected.filter(|s| s.detail.is_some() || s.documentation.is_some()).map(|s| {
@@ -310,10 +320,17 @@ impl Workspace {
                 .border_color(t.border)
                 .text_size(px(12.0))
                 .overflow_hidden()
-                .when_some(s.detail.clone(), |d, detail| d.child(div().font_family(CODE_FONT).text_color(t.fg).child(detail)))
+                .when_some(s.detail.clone(), |d, detail| {
+                    d.child(div().font_family(CODE_FONT).text_color(t.fg).child(detail))
+                })
                 .when_some(s.documentation.clone(), |d, doc| {
                     let clean = doc.replace("```python", "").replace("```", "");
-                    d.child(div().mt(px(6.0)).text_color(t.fg_muted).children(clean.trim().lines().take(14).map(|l| div().child(l.to_owned()))))
+                    d.child(
+                        div()
+                            .mt(px(6.0))
+                            .text_color(t.fg_muted)
+                            .children(clean.trim().lines().take(14).map(|l| div().child(l.to_owned()))),
+                    )
                 })
         });
         Some(
@@ -355,7 +372,10 @@ impl Workspace {
         let problems: Vec<(u8, String)> = ed
             .diagnostics
             .iter()
-            .filter(|d| (d.start <= pos && pos <= d.end) || (d.start.line == pos.line && d.start == d.end && d.start.col == pos.col))
+            .filter(|d| {
+                (d.start <= pos && pos <= d.end)
+                    || (d.start.line == pos.line && d.start == d.end && d.start.col == pos.col)
+            })
             .map(|d| (d.severity, d.message.clone()))
             .collect();
         let Some(doc) = ed.document().cloned() else { return };
@@ -367,7 +387,11 @@ impl Workspace {
         self.hover.problems = problems;
         self.hover.sections.clear();
         cx.notify();
-        let Some(server) = self.lsp.server.clone() else { return };
+        let expression = forge_dap::expression_at(doc.read(cx).doc.buffer.line(pos.line), pos.col);
+        if !expression.is_empty() && self.debug_hover(expression, generation, cx) {
+            return;
+        }
+        let Some(server) = self.language_server(&path) else { return };
         self.lsp_flush(cx);
         self.hover.task = Some(cx.spawn(async move |this, cx| {
             let md = server.hover(&path, lsp_pos).await;
@@ -404,9 +428,14 @@ impl Workspace {
         });
         let sections = self.hover.sections.iter().map(|s| {
             if s.code {
-                div().font_family(CODE_FONT).text_color(t.fg).children(s.text.lines().map(|l| div().child(l.to_owned())))
+                div()
+                    .font_family(CODE_FONT)
+                    .text_color(t.fg)
+                    .children(s.text.lines().map(|l| div().child(l.to_owned())))
             } else {
-                div().text_color(t.fg_muted).children(s.text.lines().take(20).map(|l| div().min_h(px(8.0)).child(l.to_owned())))
+                div()
+                    .text_color(t.fg_muted)
+                    .children(s.text.lines().take(20).map(|l| div().min_h(px(8.0)).child(l.to_owned())))
             }
         });
         Some(
@@ -459,7 +488,7 @@ impl Workspace {
         let Some(doc) = ed.read(cx).document().cloned() else { return };
         let pos = pos.unwrap_or_else(|| ed.read(cx).cursor());
         let path = doc.read(cx).doc.path().to_owned();
-        let Some(server) = self.lsp.server.clone() else {
+        let Some(server) = self.active_language_server(cx) else {
             return self.status_note("Go to Definition needs the Python language server.", cx);
         };
         self.lsp_flush(cx);

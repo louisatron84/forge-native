@@ -76,7 +76,7 @@ impl Default for Settings {
             tab_size: 4,
             python_path: String::new(),
             shell: String::new(),
-            reopen_last_project: true,
+            reopen_last_project: false,
             show_welcome: true,
             formatter: Formatter::Auto,
             format_on_save: false,

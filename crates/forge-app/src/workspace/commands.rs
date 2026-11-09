@@ -27,6 +27,12 @@ impl Workspace {
             p.ends_with(".py") || p.ends_with(".pyi")
         });
         match id {
+            "debug.toggleBreakpoint" | "debug.editBreakpoint" => has_doc,
+            "debug.start" => self.can_launch(),
+            "debug.clearBreakpoints" => !self.debug.breakpoints.saved.is_empty(),
+            "debug.toggleRaised" => true,
+            id if id.starts_with("debug.") => self.debug.running,
+            id if id.starts_with("git.") => self.git_available(id, cx),
             "editor.toggleComment"
             | "file.save"
             | "file.rename"
@@ -47,14 +53,12 @@ impl Workspace {
             | "file.saveEncoding"
             | "palette.line"
             | "nav.definition"
-            | "debug.toggleBreakpoint"
             | "nav.references"
             | "nav.symbol"
             | "nav.implementations"
             | "nav.typeDefinition"
             | "nav.callHierarchy"
-            | "editor.quickFix"
-            | "debug.editBreakpoint" => has_doc,
+            | "editor.quickFix" => has_doc,
             "editor.renameSymbol" => has_doc && self.editor_focused(window, cx),
             "editor.format" | "editor.formatSelection" | "editor.organizeImports" | "editor.fixAll" => py_doc,
             "find.close" => self.find_bar.read(cx).is_open(),
@@ -78,38 +82,15 @@ impl Workspace {
             | "tests.runAll"
             | "tests.runFailed"
             | "python.installRuff"
-            | "palette.files"
-            | "git.init" => has_folder,
+            | "palette.files" => has_folder,
             "tests.runFile" | "tests.runAtCursor" => has_doc,
             "tasks.rerun" => has_folder && self.run.last_task.is_some(),
-            "run.stop" => self.is_running(cx),
-            // Need a debug session, a test run or a git repository: none yet.
-            "debug.restart"
-            | "debug.stepOver"
-            | "debug.stepInto"
-            | "debug.stepOut"
-            | "debug.pause"
-            | "debug.clearBreakpoints"
-            | "git.acceptCurrent"
-            | "git.acceptIncoming"
-            | "git.acceptBoth"
-            | "git.nextConflict"
-            | "git.prevConflict"
-            | "git.history"
-            | "git.fileHistory"
-            | "git.toggleBlame"
-            | "git.commit"
-            | "git.branch"
-            | "git.pull"
-            | "git.push"
-            | "git.fetch"
-            | "git.stageAll" => false,
+            "run.stop" => self.is_running(cx) || self.debug.running,
             "tests.stop" => self.tests.read(cx).is_running(),
             "terminal.kill" | "terminal.next" => {
                 self.tasks.is_shown("terminal") && self.terminal.read(cx).session_count() > 0
             }
-            "git.diffFile" => has_doc && has_folder,
-            "run.smart" | "run.file" | "run.memory" | "debug.start" => self.can_launch(),
+            "run.smart" | "run.file" | "run.memory" => self.can_launch(),
             _ => true,
         }
     }
@@ -119,10 +100,20 @@ impl Workspace {
         if !self.available(id, window, cx) {
             return;
         }
+        if id.starts_with("git.") {
+            self.git_command(id, window, cx);
+            return;
+        }
+        if id.starts_with("debug.") {
+            self.debug_command(id, window, cx);
+            return;
+        }
         let group = self.tabs.active_group.min(1);
         let editor = self.editors[group].clone();
         match id {
             // ---------- files and folders ----------
+            "help.checkUpdates" => self.check_updates(false, window, cx),
+            "help.releaseNotes" => self.show_release_notes(window, cx),
             "file.openFolder" => self.open_folder_dialog(window, cx),
             "file.openFolderByPath" => {
                 let initial = self.root.as_ref().map(|r| r.to_string_lossy().into_owned()).unwrap_or_default();
@@ -243,8 +234,12 @@ impl Workspace {
             }
 
             // ---------- run ----------
+            "run.smart" if self.debug.running || self.debug.breakpoints.count() > 0 => self.start_debug(window, cx),
             "run.smart" | "run.file" => self.run_current_file(window, cx),
-            "run.stop" => self.stop_run(cx),
+            "run.stop" => {
+                self.stop_debug(cx);
+                self.stop_run(cx);
+            }
             "run.selectConfig" => self.pick_run_config(window, cx),
             "run.editConfigs" => self.edit_run_file(window, cx),
             "tasks.run" => self.pick_task(window, cx),

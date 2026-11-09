@@ -69,16 +69,32 @@ pub fn parse_ruff_json(json: &str) -> Vec<LintProblem> {
         let fix = d["fix"]["edits"].as_array().and_then(|edits| {
             let edits: Vec<Edit> = edits
                 .iter()
-                .filter_map(|e| Some(Edit { start: loc(&e["location"])?, end: loc(&e["end_location"])?, text: e["content"].as_str()?.to_owned() }))
+                .filter_map(|e| {
+                    Some(Edit {
+                        start: loc(&e["location"])?,
+                        end: loc(&e["end_location"])?,
+                        text: e["content"].as_str()?.to_owned(),
+                    })
+                })
                 .collect();
             if edits.is_empty() {
                 return None;
             }
-            let title = d["fix"]["message"].as_str().filter(|m| !m.is_empty()).map_or_else(|| format!("Fix {code}"), str::to_owned);
+            let title = d["fix"]["message"]
+                .as_str()
+                .filter(|m| !m.is_empty())
+                .map_or_else(|| format!("Fix {code}"), str::to_owned);
             let applicability = d["fix"]["applicability"].as_str().unwrap_or("");
             Some(LintFix { title, edits, safe: applicability != "unsafe" && applicability != "display-only" })
         });
-        out.push(LintProblem { code, message: message.to_owned(), start, end, fix, url: d["url"].as_str().map(str::to_owned) });
+        out.push(LintProblem {
+            code,
+            message: message.to_owned(),
+            start,
+            end,
+            fix,
+            url: d["url"].as_str().map(str::to_owned),
+        });
     }
     out
 }
@@ -110,7 +126,11 @@ pub fn line_diff(before: &str, after: &str) -> Option<Edit> {
             return Some(delete_lines(&a, top, a_end));
         }
         // Otherwise replace the changed lines' text (the line break after them stays).
-        return Some(Edit { start: Pos::new(top, 0), end: Pos::new(a_end - 1, len(a[a_end - 1])), text: b[top..b_end].join("\n") });
+        return Some(Edit {
+            start: Pos::new(top, 0),
+            end: Pos::new(a_end - 1, len(a[a_end - 1])),
+            text: b[top..b_end].join("\n"),
+        });
     }
     // Only insertions: put the new lines before line `top`.
     if top < a.len() {

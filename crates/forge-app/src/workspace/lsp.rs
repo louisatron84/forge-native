@@ -33,6 +33,8 @@ pub(crate) enum LspStatus {
 
 #[derive(Default)]
 pub(crate) struct LspState {
+    pub services: forge_lsp::services::LanguageServices,
+    integrations: std::collections::HashMap<&'static str, (ServerProcess, Task<()>)>,
     pub server: Option<Arc<LspServer>>,
     process: Option<ServerProcess>,
     pub status: LspStatus,
@@ -58,6 +60,85 @@ pub(crate) fn from_lsp(line_text: &str, p: LspPos) -> Pos {
 }
 
 impl Workspace {
+    /// The integration owning a file; editor features do not select a Python slot.
+    pub(crate) fn language_server(&self, path: &str) -> Option<Arc<LspServer>> {
+        self.lsp.services.for_path(path)
+    }
+
+    pub(crate) fn active_language_server(&self, cx: &gpui_kit::App) -> Option<Arc<LspServer>> {
+        let doc = self.active_doc()?;
+        self.language_server(doc.read(cx).doc.path())
+    }
+
+    /// Register another integration without stopping existing servers. Language
+    /// packs supply the configuration and executable; each owns its process,
+    /// event pump, document versions and diagnostics independently.
+    pub(crate) fn start_language_integration(
+        &mut self,
+        config: forge_lsp::server::ServerConfig,
+        command: PathBuf,
+        args: Vec<String>,
+        settings: Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let root = self.root.clone().ok_or("Open a project first")?;
+        let id = config.id;
+        self.lsp.integrations.remove(id);
+        self.lsp.services.remove(id);
+        let (tx, mut rx) = futures::channel::mpsc::unbounded::<Value>();
+        let exit = tx.clone();
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let process = ServerProcess::spawn(&command, &args, &root, move |_| {
+            let _ = exit.unbounded_send(json!({"exit":true}));
+        })
+        .map_err(|e| e.to_string())?;
+        let diagnostics = tx.clone();
+        let server = LspServer::new(process.client.clone(), config, move || {
+            let _ = diagnostics.unbounded_send(json!({"diagnostics":true}));
+        });
+        let edits = tx;
+        process.client.on_request_deferred("workspace/applyEdit", move |request, params| {
+            let _ = edits.unbounded_send(json!({"request":request,"params":params}));
+        });
+        self.lsp.services.insert(server.clone());
+        let task = cx.spawn_in(window, async move |this, cx| {
+            let result = server.start(&root.to_string_lossy(), settings).await;
+            this.update_in(cx, |ws, window, cx| {
+                if let Err(error) = result {
+                    ws.alert(error, window, cx);
+                } else {
+                    ws.lsp_sync(window, cx);
+                }
+            })
+            .ok();
+            while let Some(event) = rx.next().await {
+                if this
+                    .update_in(cx, |ws, window, cx| {
+                        if event["exit"] == true {
+                            ws.lsp.services.remove(id);
+                            ws.refresh_diagnostics(cx);
+                            return false;
+                        }
+                        if let Some(request) = event.get("request") {
+                            let edits = forge_lsp::navigation::parse_workspace_edit(&event["params"]["edit"]);
+                            let applied = ws.apply_file_edits(&edits, window, cx).is_ok();
+                            server.client.respond(request.clone(), json!({"applied":applied}));
+                        }
+                        ws.refresh_diagnostics(cx);
+                        true
+                    })
+                    .ok()
+                    != Some(true)
+                {
+                    break;
+                }
+            }
+        });
+        self.lsp.integrations.insert(id, (process, task));
+        Ok(())
+    }
+
     /// The open Python files the server should know: (path, language id, text).
     fn python_docs(&self, cx: &gpui_kit::App) -> Vec<(String, String, String)> {
         self.tabs
@@ -65,7 +146,7 @@ impl Workspace {
             .iter()
             .filter_map(|id| self.docs.get(id))
             .map(|d| &d.read(cx).doc)
-            .filter(|d| !d.large && d.mode().language.server == Some("pyright"))
+            .filter(|d| !d.large)
             .map(|d| (d.path().to_owned(), d.mode().language.lsp_id().to_owned(), d.text()))
             .collect()
     }
@@ -81,14 +162,24 @@ impl Workspace {
             return;
         }
         let docs = self.python_docs(cx);
+        self.lsp.services.sync_docs(&docs);
         match (&self.lsp.server, &self.lsp.status) {
             (Some(server), LspStatus::Running) => server.sync_docs(&docs),
-            (None, LspStatus::Off) if !docs.is_empty() => self.start_language_server(window, cx),
+            (None, LspStatus::Off) if docs.iter().any(|(_, language, _)| language == "python") => {
+                self.start_language_server(window, cx)
+            }
             _ => {}
         }
     }
 
     pub(crate) fn stop_language_server(&mut self, cx: &mut Context<Self>) {
+        self.lsp.services.clear();
+        self.lsp.integrations.clear();
+        self.stop_python_language_server(cx);
+    }
+
+    fn stop_python_language_server(&mut self, cx: &mut Context<Self>) {
+        self.lsp.services.remove("pyright");
         self.lsp.generation += 1;
         if let Some(s) = self.lsp.server.take() {
             s.stopped();
@@ -102,14 +193,14 @@ impl Workspace {
     }
 
     pub(crate) fn restart_language_server(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.stop_language_server(cx);
+        self.stop_python_language_server(cx);
         self.lsp.restarts = 0;
         self.start_language_server(window, cx);
     }
 
     fn start_language_server(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(root) = self.root.clone() else { return };
-        self.stop_language_server(cx);
+        self.stop_python_language_server(cx);
         let generation = self.lsp.generation;
         let configured = Some(self.effective_settings(cx).python_path).filter(|p| !p.is_empty());
         let python = self.pyenv.current.as_ref().map(|i| i.path.clone()).or(configured);
@@ -141,6 +232,7 @@ impl Workspace {
             let _ = edit_tx.unbounded_send(LspEvent::ApplyEdit(id, params));
         });
         self.lsp.server = Some(server.clone());
+        self.lsp.services.insert(server.clone());
         self.lsp.process = Some(process);
         self.lsp.pump = Some(cx.spawn_in(window, async move |this, cx| {
             let settings = match &python {
@@ -159,7 +251,9 @@ impl Workspace {
                         ws.refresh_semantic_tokens(cx);
                         ws.outline_file_changed(cx);
                     }
-                    Err(e) => ws.lsp.status = LspStatus::Failed(format!("The Python language server didn't start: {e}")),
+                    Err(e) => {
+                        ws.lsp.status = LspStatus::Failed(format!("The Python language server didn't start: {e}"))
+                    }
                 }
                 ws.refresh_diagnostics(cx);
                 true
@@ -199,6 +293,7 @@ impl Workspace {
                 }
             }
             LspEvent::Exited(g) if g == self.lsp.generation => {
+                self.lsp.services.remove("pyright");
                 self.lsp.server = None;
                 self.lsp.process = None;
                 if self.lsp.restarts < 3 {
@@ -206,7 +301,9 @@ impl Workspace {
                     self.lsp.status = LspStatus::Off;
                     self.start_language_server(window, cx);
                 } else {
-                    self.lsp.status = LspStatus::Failed("The Python language server stopped (Restart Python Language Server tries again).".into());
+                    self.lsp.status = LspStatus::Failed(
+                        "The Python language server stopped (Restart Python Language Server tries again).".into(),
+                    );
                     self.refresh_diagnostics(cx);
                 }
             }
@@ -223,8 +320,7 @@ impl Workspace {
 
     /// An open document changed: the server hears about it a moment later.
     pub(crate) fn lsp_doc_changed(&mut self, path: &str, cx: &mut Context<Self>) {
-        let Some(server) = self.lsp.server.clone() else { return };
-        server.doc_changed(path);
+        self.lsp.services.changed(path);
         self.lsp.flush_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(Duration::from_millis(150)).await;
             this.update(cx, |ws, cx| {
@@ -238,25 +334,22 @@ impl Workspace {
     /// Send pending edits now (before asking the server about a file).
     pub(crate) fn lsp_flush(&mut self, cx: &mut Context<Self>) {
         self.lsp.flush_task = None;
-        let Some(server) = self.lsp.server.clone() else { return };
-        if !server.has_pending() {
-            return;
-        }
-        let texts: Vec<(String, String)> = self.docs.values().map(|d| &d.read(cx).doc).map(|d| (d.path().to_owned(), d.text())).collect();
-        server.flush(&|p| texts.iter().find(|(q, _)| same_path(q, p)).map(|(_, t)| t.clone()));
+        let texts: Vec<(String, String)> =
+            self.docs.values().map(|d| &d.read(cx).doc).map(|d| (d.path().to_owned(), d.text())).collect();
+        self.lsp.services.flush(&|p| texts.iter().find(|(q, _)| same_path(q, p)).map(|(_, t)| t.clone()));
     }
 
     /// Tell the server a file was saved.
     pub(crate) fn lsp_did_save(&mut self, path: &str, cx: &mut Context<Self>) {
-        let Some(server) = self.lsp.server.clone() else { return };
         let text = self.open_text(path, cx);
-        server.did_save(path, &|_| text.clone());
+        self.lsp.services.did_save(path, &|_| text.clone());
     }
 
     /// Diagnostics for one file: the server's plus Ruff's (without duplicates).
     pub(crate) fn diagnostics_for(&self, path: &str) -> Vec<Diagnostic> {
-        let own = self.lsp.server.as_ref().map(|s| s.diagnostics_for(path)).unwrap_or_default();
-        let extra: Vec<Diagnostic> = self.external_diagnostics.iter().filter(|(p, _)| same_path(p, path)).flat_map(|(_, l)| l.clone()).collect();
+        let own = self.lsp.services.diagnostics_for(path);
+        let extra: Vec<Diagnostic> =
+            self.external_diagnostics.iter().filter(|(p, _)| same_path(p, path)).flat_map(|(_, l)| l.clone()).collect();
         forge_lsp::server::merge_diagnostics(&own, &extra)
     }
 
@@ -279,7 +372,7 @@ impl Workspace {
             };
             ed.update(cx, |e, cx| e.set_diagnostics(list, cx));
         }
-        let mut all: Vec<(String, Vec<Diagnostic>)> = self.lsp.server.as_ref().map(|s| s.all_diagnostics()).unwrap_or_default();
+        let mut all: Vec<(String, Vec<Diagnostic>)> = self.lsp.services.all_diagnostics();
         for (p, l) in &self.external_diagnostics {
             match all.iter_mut().find(|(q, _)| same_path(q, p)) {
                 Some((_, own)) => *own = forge_lsp::server::merge_diagnostics(own, l),
@@ -298,7 +391,10 @@ impl Workspace {
             p.set(
                 all,
                 |path| match &root {
-                    Some(r) => Path::new(path).strip_prefix(r).map(|x| x.to_string_lossy().replace('\\', "/")).unwrap_or_else(|_| path.to_owned()),
+                    Some(r) => Path::new(path)
+                        .strip_prefix(r)
+                        .map(|x| x.to_string_lossy().replace('\\', "/"))
+                        .unwrap_or_else(|_| path.to_owned()),
                     None => path.to_owned(),
                 },
                 cx,
@@ -315,7 +411,12 @@ impl Workspace {
 
     /// Apply edits across files: open files are edited in the editor (one undo step
     /// each), closed ones on disk. Returns the closed files changed.
-    pub(crate) fn apply_file_edits(&mut self, edits: &FileEdits, _window: &mut Window, cx: &mut Context<Self>) -> Result<Vec<String>, String> {
+    pub(crate) fn apply_file_edits(
+        &mut self,
+        edits: &FileEdits,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<Vec<String>, String> {
         let mut on_disk = Vec::new();
         for (path, list) in edits {
             let open = self.docs.values().find(|d| same_path(d.read(cx).doc.path(), path)).cloned();
@@ -324,14 +425,21 @@ impl Workspace {
                     let converted: Vec<(Pos, Pos, String)> = {
                         let d = &doc.read(cx).doc;
                         list.iter()
-                            .map(|e| (from_lsp(d.buffer.line(e.start.line), e.start), from_lsp(d.buffer.line(e.end.line), e.end), e.text.clone()))
+                            .map(|e| {
+                                (
+                                    from_lsp(d.buffer.line(e.start.line), e.start),
+                                    from_lsp(d.buffer.line(e.end.line), e.end),
+                                    e.text.clone(),
+                                )
+                            })
                             .collect()
                     };
                     self.apply_doc_edits(&doc, converted, cx);
                 }
                 None => {
                     let text = std::fs::read_to_string(path).map_err(|e| format!("Couldn't read {path}: {e}"))?;
-                    std::fs::write(path, apply_edits(&text, list)).map_err(|e| format!("Couldn't write {path}: {e}"))?;
+                    std::fs::write(path, apply_edits(&text, list))
+                        .map_err(|e| format!("Couldn't write {path}: {e}"))?;
                     on_disk.push(path.clone());
                 }
             }
@@ -345,7 +453,12 @@ impl Workspace {
 
     /// Edit an open document as one undo step (character positions, in any order,
     /// not overlapping).
-    pub(crate) fn apply_doc_edits(&mut self, doc: &gpui_kit::Entity<crate::document::Document>, mut edits: Vec<(Pos, Pos, String)>, cx: &mut Context<Self>) {
+    pub(crate) fn apply_doc_edits(
+        &mut self,
+        doc: &gpui_kit::Entity<crate::document::Document>,
+        mut edits: Vec<(Pos, Pos, String)>,
+        cx: &mut Context<Self>,
+    ) {
         if edits.is_empty() {
             return;
         }
@@ -381,7 +494,11 @@ impl Workspace {
         let env = tools_env(&data_dir);
         let tools_py: PathBuf = tools_python(&data_dir);
         let Some(base) = self.pyenv.current.as_ref().map(|i| i.path.clone()) else {
-            return self.alert("Installing the language server needs Python: pick an interpreter first (🐍 in the status bar).", window, cx);
+            return self.alert(
+                "Installing the language server needs Python: pick an interpreter first (🐍 in the status bar).",
+                window,
+                cx,
+            );
         };
         let install = move |ws: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>| {
             let after: super::pyenv::AfterRun = Box::new(|ws, code, window, cx| {
@@ -408,17 +525,25 @@ impl Workspace {
                 install(ws, window, cx);
             }
         });
-        self.run_tool("Creating Forge's tools environment", base, "venv", vec![env.to_string_lossy().into_owned()], Some(after), window, cx);
+        self.run_tool(
+            "Creating Forge's tools environment",
+            base,
+            "venv",
+            vec![env.to_string_lossy().into_owned()],
+            Some(after),
+            window,
+            cx,
+        );
     }
 }
 
 impl Workspace {
     /// Ask the server what each name means in the files on screen (semantic colours).
     pub(crate) fn refresh_semantic_tokens(&mut self, cx: &mut Context<Self>) {
-        let Some(server) = self.lsp.server.clone() else { return };
         for ed in self.editors.clone() {
             let Some(doc) = ed.read(cx).document().cloned() else { continue };
             let path = doc.read(cx).doc.path().to_owned();
+            let Some(server) = self.lsp.services.for_path(&path) else { continue };
             if !server.knows(&path) {
                 continue;
             }
@@ -440,7 +565,13 @@ impl Workspace {
                             let text = d.doc.buffer.line(line).to_owned();
                             let tokens = tokens
                                 .into_iter()
-                                .map(|t| forge_text::Token::new(col_from_utf16(&text, t.start), col_from_utf16(&text, t.end), t.kind))
+                                .map(|t| {
+                                    forge_text::Token::new(
+                                        col_from_utf16(&text, t.start),
+                                        col_from_utf16(&text, t.end),
+                                        t.kind,
+                                    )
+                                })
                                 .collect();
                             (line, tokens)
                         })

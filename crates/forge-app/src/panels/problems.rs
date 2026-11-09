@@ -31,7 +31,12 @@ impl ProblemsPanel {
     }
 
     /// Show these; returns (errors, warnings).
-    pub fn set(&mut self, files: Vec<(String, Vec<Diagnostic>)>, relative: impl Fn(&str) -> String, cx: &mut Context<Self>) -> (usize, usize) {
+    pub fn set(
+        &mut self,
+        files: Vec<(String, Vec<Diagnostic>)>,
+        relative: impl Fn(&str) -> String,
+        cx: &mut Context<Self>,
+    ) -> (usize, usize) {
         let mut shown: Vec<(String, String, Vec<Diagnostic>)> = files
             .into_iter()
             .map(|(p, l)| {
@@ -73,7 +78,12 @@ impl Render for ProblemsPanel {
                     2 => ("⚠", t.warn),
                     _ => ("ℹ", t.info),
                 };
-                let where_ = format!("{}[{}, {}]", d.code.as_ref().map(|c| format!("{c}  ")).unwrap_or_default(), d.start.line + 1, d.start.col + 1);
+                let where_ = format!(
+                    "{}[{}, {}]",
+                    d.code.as_ref().map(|c| format!("{c}  ")).unwrap_or_default(),
+                    d.start.line + 1,
+                    d.start.col + 1
+                );
                 let (p, line, col) = (PathBuf::from(path), d.start.line, d.start.col);
                 rows.push(
                     div()
@@ -88,14 +98,26 @@ impl Render for ProblemsPanel {
                         .hover(|s| s.bg(t.bg_hover))
                         .on_click(cx.listener(move |_, _, _, cx| cx.emit(ProblemsEvent::Open(p.clone(), line, col))))
                         .child(div().w(px(14.0)).text_color(color).child(icon))
-                        .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().child(d.message.lines().next().unwrap_or("").to_owned()))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .whitespace_nowrap()
+                                .child(d.message.lines().next().unwrap_or("").to_owned()),
+                        )
                         .child(div().flex_none().text_size(px(11.0)).text_color(t.fg_muted).child(where_))
                         .into_any_element(),
                 );
             }
         }
         let empty = rows.is_empty();
-        let status = if self.status.is_empty() { "No problems found in open Python files.".to_owned() } else { self.status.clone() };
+        let status = if self.status.is_empty() {
+            "No problems found in open Python files.".to_owned()
+        } else {
+            self.status.clone()
+        };
         div()
             .id("problems")
             .size_full()

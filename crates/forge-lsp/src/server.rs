@@ -278,6 +278,7 @@ impl LspServer {
     /// Match the server's open documents to these (path, language id, text) — the open
     /// tabs in its languages.
     pub fn sync_docs(&self, docs: &[(String, String, String)]) {
+        let docs: Vec<_> = docs.iter().filter(|(_, language, _)| self.handles(language)).collect();
         let Ok(mut s) = self.state.lock() else { return };
         let wanted: HashSet<String> = docs.iter().map(|(p, _, _)| path_key(p)).collect();
         let gone: Vec<(String, String)> =
@@ -432,6 +433,28 @@ impl LspServer {
     /// Every use of the symbol at `at` across the project (including its definition).
     pub async fn references(&self, path: &str, at: LspPos) -> Vec<Location> {
         self.locations("textDocument/references", path, at, json!({ "context": { "includeDeclaration": true } })).await
+    }
+
+    pub async fn implementations(&self, path: &str, at: LspPos) -> Vec<Location> {
+        self.locations("textDocument/implementation", path, at, json!({})).await
+    }
+
+    /// Integration-specific checks stay here, out of editor commands. Other
+    /// languages let their server validate identifiers (e.g. JavaScript's `$`).
+    pub fn rename_error(&self, name: &str) -> Option<String> {
+        if self.config.id == "pyright"
+            && !(name.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
+                && name.chars().all(|c| c.is_alphanumeric() || c == '_'))
+        {
+            Some(format!("\"{name}\" isn't a valid Python name (letters, digits and _, not starting with a digit)."))
+        } else {
+            None
+        }
+    }
+
+    pub fn uses_python_implementation_fallback(&self) -> bool {
+        self.config.id == "pyright"
+            && self.capabilities().get("implementationProvider").is_none_or(|v| v == false || v.is_null())
     }
 
     pub async fn type_definition(&self, path: &str, at: LspPos) -> Vec<Location> {

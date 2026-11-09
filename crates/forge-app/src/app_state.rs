@@ -10,6 +10,8 @@ use gpui_kit::{px, App, Global};
 use std::sync::Arc;
 
 pub struct AppState {
+    pub updater: Arc<forge_update::Updater>,
+    pub restart_after_update: bool,
     pub user: UserState,
     pub settings: Settings,
     /// Why settings.json couldn't be read (the defaults are used).
@@ -27,7 +29,16 @@ pub fn init(cx: &mut App) {
     let (overrides, keys_error) = user.keybindings();
     let mut keymap = Keymap::default();
     keymap.set_overrides(overrides);
-    cx.set_global(AppState { user, settings, settings_error, keymap, keys_error });
+    let updater = Arc::new(forge_update::Updater::new(user.dir().to_path_buf()));
+    cx.set_global(AppState {
+        user,
+        settings,
+        settings_error,
+        keymap,
+        keys_error,
+        updater,
+        restart_after_update: false,
+    });
     apply_theme(cx);
 }
 

@@ -232,7 +232,13 @@ impl Palette {
             choices
                 .into_iter()
                 .take(MAX_ITEMS)
-                .map(|c| Item { label: c.label, positions: Vec::new(), detail: c.detail, hint: c.hint, run: Some(c.run) })
+                .map(|c| Item {
+                    label: c.label,
+                    positions: Vec::new(),
+                    detail: c.detail,
+                    hint: c.hint,
+                    run: Some(c.run),
+                })
                 .collect()
         };
         self.selected = 0;
@@ -346,7 +352,9 @@ impl Palette {
                     cx.background_executor().timer(std::time::Duration::from_millis(180)).await;
                     this.update(cx, |p, cx| {
                         if p.open && p.search_generation == generation {
-                            cx.emit(PaletteEvent::Run(Rc::new(move |ws, w, cx| provider(ws, q.clone(), generation, w, cx))));
+                            cx.emit(PaletteEvent::Run(Rc::new(move |ws, w, cx| {
+                                provider(ws, q.clone(), generation, w, cx)
+                            })));
                         }
                     })
                     .ok();

@@ -4,9 +4,11 @@
 //! right-click, F2, Delete). Replaces `src/renderer/fileTree.ts`.
 
 use crate::theme::{ForgeTheme, Theme};
+use forge_core::git::{ChangeKind, StatusMap};
 use forge_core::names::name_problem;
 use forge_core::tabs::{is_inside, same_path};
 use forge_sys::files::{create_entry, read_dir, rename_entry, DirEntry};
+use futures::{channel::mpsc, FutureExt, StreamExt};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
 use gpui_kit::{
     anchored, deferred, div, prelude::FluentBuilder, px, uniform_list, AnyElement, App, AppContext, ClipboardItem,
@@ -17,11 +19,14 @@ use gpui_kit::{
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 const INDENT: f32 = 12.0;
 const ROW_HEIGHT: f32 = 22.0;
 
 pub enum FileTreeEvent {
+    OpenFolder,
+    NewProject,
     Open(PathBuf),
     /// A file or folder was created (files are opened right away).
     Created {
@@ -259,6 +264,12 @@ enum MenuAction {
 pub struct FileTree {
     focus: FocusHandle,
     st: TreeState,
+    /// Git status: changed files (by key) and the folders holding them.
+    git_files: HashMap<String, ChangeKind>,
+    git_folders: HashSet<String>,
+    /// One worker per project; requests are coalesced while git is running.
+    git_refresh: Option<mpsc::Sender<()>>,
+    git_task: Option<gpui_kit::Task<()>>,
     editing: Option<Editing>,
     menu: Option<Menu>,
     scroll: UniformListScrollHandle,
@@ -276,6 +287,10 @@ impl FileTree {
         Self {
             focus: cx.focus_handle(),
             st: TreeState::default(),
+            git_files: HashMap::new(),
+            git_folders: HashSet::new(),
+            git_refresh: None,
+            git_task: None,
             editing: None,
             menu: None,
             scroll: UniformListScrollHandle::new(),
@@ -285,6 +300,59 @@ impl FileTree {
 
     pub fn root(&self) -> Option<&Path> {
         self.st.root.as_deref()
+    }
+
+    /// Show git status: coloured names and a letter for changed files, a dot on folders.
+    pub fn set_git(&mut self, status: Option<&StatusMap>, cx: &mut Context<Self>) {
+        let files: HashMap<String, ChangeKind> =
+            status.map(|s| s.files.iter().map(|(p, k)| (key(Path::new(p)), *k)).collect()).unwrap_or_default();
+        let folders: HashSet<String> =
+            status.map(|s| s.folders.iter().map(|p| key(Path::new(p))).collect()).unwrap_or_default();
+        if files != self.git_files || folders != self.git_folders {
+            self.git_files = files;
+            self.git_folders = folders;
+            cx.notify();
+        }
+    }
+
+    /// Request a new status after saving, file operations or regaining focus.
+    pub fn refresh_git(&mut self) {
+        if let Some(sender) = &mut self.git_refresh {
+            // A full channel already has a refresh pending.
+            let _ = sender.try_send(());
+        }
+    }
+
+    /// Cancel the old project's worker, clear its decorations, and read the
+    /// new status off the UI thread. Polling also catches terminal commands.
+    fn start_git(&mut self, cx: &mut Context<Self>) {
+        self.git_task = None;
+        self.git_refresh = None;
+        self.set_git(None, cx);
+        let Some(folder) = self.st.root.clone() else { return };
+        let (sender, mut requests) = mpsc::channel(1);
+        self.git_refresh = Some(sender);
+        self.git_task = Some(cx.spawn(async move |this, cx| loop {
+            let path = folder.to_string_lossy().into_owned();
+            let status = cx.background_executor().spawn(async move { forge_sys::git::tree_status(&path) }).await;
+            let applied = this.update(cx, |tree, cx| {
+                if tree.st.root.as_ref() != Some(&folder) {
+                    return false;
+                }
+                tree.set_git(status.as_ref(), cx);
+                true
+            });
+            if !matches!(applied, Ok(true)) {
+                break;
+            }
+            let timer = cx.background_executor().timer(Duration::from_secs(5)).fuse();
+            let request = requests.next().fuse();
+            futures::pin_mut!(timer, request);
+            futures::select! {
+                _ = timer => {},
+                next = request => if next.is_none() { break },
+            }
+        }));
     }
 
     /// With no folder open: recently opened folders to reopen with one click.
@@ -297,17 +365,20 @@ impl FileTree {
         self.editing = None;
         self.menu = None;
         self.st.set_root(root);
+        self.start_git(cx);
         cx.notify();
     }
 
     /// Re-read one folder (or the root) from disk, keeping open folders open.
     pub fn refresh(&mut self, dir: &Path, cx: &mut Context<Self>) {
+        self.refresh_git();
         self.st.refresh(dir);
         self.st.rebuild();
         cx.notify();
     }
 
     pub fn refresh_all(&mut self, cx: &mut Context<Self>) {
+        self.refresh_git();
         self.st.refresh_all();
         self.st.rebuild();
         cx.notify();
@@ -483,6 +554,7 @@ impl FileTree {
         };
         match result {
             Ok(()) => {
+                self.refresh_git();
                 self.finish_edit(!from_blur, window, cx);
                 self.scroll_to_selected();
             }
@@ -597,6 +669,14 @@ impl FileTree {
                     (true, false) => "▸",
                 };
                 let (e1, e2) = (entry.clone(), entry.clone());
+                let git = (!entry.is_dir).then(|| self.git_files.get(&key(&entry.path)).copied()).flatten();
+                let dirty_folder = entry.is_dir && self.git_folders.contains(&key(&entry.path));
+                let git_color = git.map(|k| match k {
+                    ChangeKind::Added | ChangeKind::Untracked | ChangeKind::Copied => t.git_added,
+                    ChangeKind::Deleted => t.git_deleted,
+                    ChangeKind::Conflict => t.git_conflict,
+                    _ => t.git_modified,
+                });
                 div()
                     .id(("tree-row", index))
                     .h(px(ROW_HEIGHT))
@@ -625,8 +705,22 @@ impl FileTree {
                             .overflow_hidden()
                             .text_ellipsis()
                             .when(entry.is_dir, |d| d.font_weight(FontWeight::MEDIUM))
+                            .when_some(git_color, |d, c| d.text_color(c))
+                            .when(git == Some(ChangeKind::Deleted), |d| d.line_through())
                             .child(entry.name.clone()),
                     )
+                    .when(dirty_folder, |d| d.child(div().pl(px(4.0)).text_color(t.git_modified).child("•")))
+                    .when_some(git.zip(git_color), |d, (k, c)| {
+                        d.child(
+                            div()
+                                .ml_auto()
+                                .pl(px(8.0))
+                                .text_size(px(11.0))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(c)
+                                .child(k.letter()),
+                        )
+                    })
                     .into_any_element()
             }
         }
@@ -635,11 +729,13 @@ impl FileTree {
     fn render_name_box(&self, is_dir: bool, pad: Pixels, t: &Theme) -> AnyElement {
         let Some(ed) = &self.editing else { return div().into_any_element() };
         div()
+            .debug_selector(|| "tree-name-row".into())
+            .w_full()
             .flex()
             .flex_col()
             .pl(pad)
             .pr(px(8.0))
-            .py(px(1.0))
+            .py_0()
             .child(
                 div()
                     .flex()
@@ -651,11 +747,18 @@ impl FileTree {
                     }))
                     .child(
                         div()
+                            .debug_selector(|| "tree-name-frame".into())
                             .flex_1()
                             .min_w_0()
                             .border_1()
                             .border_color(if ed.problem.is_some() { t.err } else { t.heat_2 })
-                            .child(Input::new(&ed.input).appearance(false).cleanable(false).h(px(20.0))),
+                            // Input::h configures multiline inputs only. Override
+                            // the frame style so this fits the 22px virtual row.
+                            .child(
+                                Styled::h(Input::new(&ed.input).appearance(false).cleanable(false), px(20.0))
+                                    .py_0()
+                                    .px(px(4.0)),
+                            ),
                     ),
             )
             .when_some(ed.problem.clone(), |d, p| {
@@ -747,6 +850,24 @@ impl FileTree {
             .flex()
             .flex_col()
             .py(px(4.0))
+            .child(div().px(px(12.0)).py(px(6.0)).text_color(t.fg_muted).child("Choose a project folder to work in."))
+            .children(
+                [("Open Folder…", "tree-open-folder", false), ("New Project Folder…", "tree-new-project", true)]
+                    .into_iter()
+                    .map(|(label, id, new)| {
+                        div()
+                            .id(id)
+                            .debug_selector(|| id.to_owned())
+                            .px(px(12.0))
+                            .py(px(6.0))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.bg_hover))
+                            .child(label)
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                cx.emit(if new { FileTreeEvent::NewProject } else { FileTreeEvent::OpenFolder })
+                            }))
+                    }),
+            )
             .when(!self.recent.is_empty(), |d| {
                 d.child(
                     div().px(px(12.0)).py(px(6.0)).text_size(px(10.0)).text_color(t.fg_muted).child("RECENT FOLDERS"),
@@ -779,7 +900,8 @@ impl Render for FileTree {
             return base.child(self.render_recent(&t, cx));
         }
         type Run = fn(&mut FileTree, &mut Window, &mut Context<FileTree>);
-        let buttons: [(&'static str, &'static str, Run); 4] = [
+        let buttons: [(&'static str, &'static str, Run); 5] = [
+            ("Open…", "tree-open-folder", |_, _, cx| cx.emit(FileTreeEvent::OpenFolder)),
             ("+ File", "tree-new-file", |this, w, cx| this.start_create(false, None, w, cx)),
             ("+ Folder", "tree-new-folder", |this, w, cx| this.start_create(true, None, w, cx)),
             ("⟳", "tree-refresh", |this, _, cx| this.refresh_all(cx)),
@@ -787,6 +909,7 @@ impl Render for FileTree {
         ];
         let header = div()
             .flex()
+            .flex_wrap()
             .flex_none()
             .gap(px(2.0))
             .px(px(6.0))
@@ -797,6 +920,7 @@ impl Render for FileTree {
             .children(buttons.into_iter().map(|(label, id, run)| {
                 div()
                     .id(id)
+                    .debug_selector(|| id.to_owned())
                     .px(px(6.0))
                     .py(px(1.0))
                     .rounded(px(2.0))
@@ -818,25 +942,175 @@ impl Render for FileTree {
         .track_scroll(&self.scroll)
         .size_full()
         .py(px(4.0));
-        base.child(header)
-            .child(
-                div()
-                    .id("tree-body")
-                    .flex_1()
-                    .min_h_0()
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(|this, ev: &MouseDownEvent, _, cx| this.open_menu(ev.position, None, cx)),
-                    )
-                    .child(list),
-            )
-            .when_some(self.menu.as_ref(), |d, m| d.child(self.render_menu(m, &t, cx)))
+        let project = self.st.root.as_ref().map(|root| root.to_string_lossy().into_owned()).unwrap_or_default();
+        base.child(
+            div()
+                .px(px(10.0))
+                .py(px(5.0))
+                .text_size(px(11.0))
+                .text_color(t.fg_muted)
+                .overflow_hidden()
+                .text_ellipsis()
+                .whitespace_nowrap()
+                .child(project),
+        )
+        .child(header)
+        .child(
+            div()
+                .id("tree-body")
+                .flex_1()
+                .min_h_0()
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|this, ev: &MouseDownEvent, _, cx| this.open_menu(ev.position, None, cx)),
+                )
+                .child(list),
+        )
+        .when_some(self.menu.as_ref(), |d, m| d.child(self.render_menu(m, &t, cx)))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui_kit::TestAppContext;
+
+    fn git(dir: &Path, args: &[&str]) {
+        let output = std::process::Command::new("git").args(args).current_dir(dir).output().expect("git installed");
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    #[gpui_kit::test]
+    fn narrow_tree_name_input_has_a_visible_clickable_text_area(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_global(ForgeTheme(Arc::new(Theme::molten())));
+        });
+        let mut tree = None;
+        let (_root, cx) = cx.add_window_view(|window, cx| {
+            let view = cx.new(FileTree::new);
+            tree = Some(view.clone());
+            gpui_kit::component::Root::new(view, window, cx)
+        });
+        let tree = tree.unwrap();
+        cx.simulate_resize(gpui_kit::size(px(200.0), px(500.0)));
+        tree.update_in(cx, |tree, window, cx| {
+            tree.set_root(Some(dir.path().into()), cx);
+            tree.start_create(false, None, window, cx);
+        });
+        cx.run_until_parked();
+        let bounds = tree.read_with(cx, |t, cx| t.editing.as_ref().unwrap().input.read(cx).input_bounds());
+        assert!(bounds.size.width >= px(120.0), "Name text viewport is too narrow: {bounds:?}");
+        assert!(bounds.size.height >= px(16.0), "Name text viewport is too short: {bounds:?}");
+        assert!(bounds.size.height <= px(ROW_HEIGHT), "Name input must fit the file tree row: {bounds:?}");
+        let row = cx.debug_bounds("tree-name-row").expect("name row rendered");
+        assert!(row.size.height <= px(ROW_HEIGHT), "Name row overlaps the following files: {row:?}");
+        cx.simulate_click(bounds.center(), gpui_kit::Modifiers::default());
+        cx.simulate_input("visible.txt");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert!(dir.path().join("visible.txt").is_file());
+        tree.update_in(cx, |tree, window, cx| tree.start_create(true, Some(dir.path().into()), window, cx));
+        cx.run_until_parked();
+        let bounds = tree.read_with(cx, |t, cx| t.editing.as_ref().unwrap().input.read(cx).input_bounds());
+        assert!(bounds.size.width >= px(120.0));
+        cx.simulate_click(bounds.center(), gpui_kit::Modifiers::default());
+        cx.simulate_input("new-folder");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert!(dir.path().join("new-folder").is_dir());
+        tree.update_in(cx, |tree, window, cx| tree.start_rename(Some(dir.path().join("new-folder")), window, cx));
+        cx.run_until_parked();
+        let bounds = tree.read_with(cx, |t, cx| t.editing.as_ref().unwrap().input.read(cx).input_bounds());
+        assert!(bounds.size.width >= px(120.0));
+        cx.simulate_click(bounds.center(), gpui_kit::Modifiers::default());
+        cx.simulate_keystrokes("ctrl-a");
+        cx.simulate_input("renamed-folder");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert!(dir.path().join("renamed-folder").is_dir());
+    }
+
+    #[gpui_kit::test]
+    fn naming_a_new_file_then_renaming_it_with_the_keyboard(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_global(ForgeTheme(Arc::new(Theme::molten())));
+        });
+        let (tree, cx) = cx.add_window_view(|_, cx| FileTree::new(cx));
+        tree.update_in(cx, |tree, window, cx| {
+            tree.set_root(Some(dir.path().into()), cx);
+            tree.start_create(false, None, window, cx);
+        });
+        cx.run_until_parked();
+        cx.simulate_input("hello.txt");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert!(dir.path().join("hello.txt").is_file(), "Typing a name and Enter must create the file");
+        tree.update_in(cx, |tree, window, cx| tree.start_rename(Some(dir.path().join("hello.txt")), window, cx));
+        cx.run_until_parked();
+        cx.simulate_input("renamed");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert!(
+            dir.path().join("renamed.txt").is_file(),
+            "Rename should replace the selected name and keep the extension"
+        );
+        assert!(!dir.path().join("hello.txt").exists());
+    }
+
+    #[gpui_kit::test]
+    fn git_badges_load_on_open_and_refresh_after_external_changes(cx: &mut TestAppContext) {
+        let dir = project();
+        git(dir.path(), &["init", "-q"]);
+        cx.update(|cx| cx.set_global(ForgeTheme(Arc::new(Theme::molten()))));
+        let (tree, cx) = cx.add_window_view(|_, cx| FileTree::new(cx));
+        tree.update(cx, |t, cx| t.set_root(Some(dir.path().to_path_buf()), cx));
+        cx.run_until_parked();
+        tree.read_with(cx, |t, _| {
+            assert_eq!(t.git_files.get(&key(&dir.path().join("main.py"))), Some(&ChangeKind::Untracked));
+            assert!(t.git_folders.contains(&key(&dir.path().join("pkg"))));
+        });
+
+        git(dir.path(), &["add", "main.py"]);
+        cx.executor().advance_clock(std::time::Duration::from_secs(5));
+        cx.run_until_parked();
+        tree.read_with(cx, |t, _| {
+            assert_eq!(t.git_files.get(&key(&dir.path().join("main.py"))), Some(&ChangeKind::Added));
+        });
+
+        std::fs::write(dir.path().join("new.py"), "").expect("write");
+        tree.update(cx, |t, cx| t.refresh_all(cx));
+        cx.run_until_parked();
+        tree.read_with(cx, |t, _| {
+            assert_eq!(t.git_files.get(&key(&dir.path().join("new.py"))), Some(&ChangeKind::Untracked));
+        });
+    }
+
+    #[gpui_kit::test]
+    fn changing_the_project_clears_git_badges_and_stops_the_old_refresh(cx: &mut TestAppContext) {
+        let dir = project();
+        let other = tempfile::tempdir().expect("temp");
+        cx.update(|cx| cx.set_global(ForgeTheme(Arc::new(Theme::molten()))));
+        let (tree, cx) = cx.add_window_view(|_, cx| FileTree::new(cx));
+        tree.update(cx, |t, cx| {
+            t.set_root(Some(dir.path().to_path_buf()), cx);
+            let mut status = StatusMap::default();
+            status.files.insert(dir.path().join("main.py").to_string_lossy().into_owned(), ChangeKind::Modified);
+            status.folders.push(dir.path().join("pkg").to_string_lossy().into_owned());
+            t.set_git(Some(&status), cx);
+            t.set_root(Some(other.path().to_path_buf()), cx);
+            assert!(t.git_files.is_empty());
+            assert!(t.git_folders.is_empty());
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(std::time::Duration::from_secs(5));
+        cx.run_until_parked();
+        tree.read_with(cx, |t, _| assert!(t.git_files.is_empty() && t.git_folders.is_empty()));
+        tree.update(cx, |t, cx| t.set_root(None, cx));
+    }
 
     fn names(t: &TreeState) -> Vec<String> {
         t.rows

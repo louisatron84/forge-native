@@ -72,12 +72,8 @@ impl Workspace {
     /// files, settings changes); drop the warnings of closed files.
     pub(crate) fn lint_sync(&mut self, cx: &mut Context<Self>) {
         let on = self.effective_settings(cx).lint_with_ruff;
-        let open: Vec<(String, u64, bool)> = self
-            .docs
-            .values()
-            .map(|d| &d.read(cx).doc)
-            .map(|d| (d.path().to_owned(), d.version, d.large))
-            .collect();
+        let open: Vec<(String, u64, bool)> =
+            self.docs.values().map(|d| &d.read(cx).doc).map(|d| (d.path().to_owned(), d.version, d.large)).collect();
         let before = self.external_diagnostics.len();
         self.external_diagnostics.retain(|(p, _)| on && open.iter().any(|(o, _, _)| same_path(o, p)));
         self.code_tools.linted.retain(|p, _| open.iter().any(|(o, _, _)| same_path(o, p)));
@@ -127,7 +123,10 @@ impl Workspace {
         let (tools, python, cwd) = (self.code_tools.tools.clone(), self.tools_python(), self.tools_cwd(&path));
         cx.spawn(async move |this, cx| {
             let p = path.clone();
-            let res = cx.background_executor().spawn(async move { tools.ruff_check(python.as_deref(), &cwd, &p, &text) }).await;
+            let res = cx
+                .background_executor()
+                .spawn(async move { tools.ruff_check(python.as_deref(), &cwd, &p, &text) })
+                .await;
             this.update(cx, |ws, cx| {
                 if res.missing {
                     ws.code_tools.ruff_missing = true;
@@ -211,8 +210,9 @@ impl Workspace {
             let d = &doc.read(cx).doc;
             (self.to_lsp(d, start), self.to_lsp(d, end))
         };
-        let server = self.lsp.server.clone().filter(|s| s.knows(&path));
-        let server_diags: Vec<Diagnostic> = here.iter().filter(|d| d.source.as_deref() != Some("Ruff")).cloned().collect();
+        let server = self.active_language_server(cx).filter(|s| s.knows(&path));
+        let server_diags: Vec<Diagnostic> =
+            here.iter().filter(|d| d.source.as_deref() != Some("Ruff")).cloned().collect();
         cx.spawn_in(window, async move |this, cx| {
             let actions = match &server {
                 Some(s) => s.code_actions(&path, s16, e16, &server_diags, None).await,
@@ -254,7 +254,10 @@ impl Workspace {
                 continue; // offered below
             }
             let title = a.title.clone();
-            items.push(Choice::new(title, move |ws, window, cx| ws.run_code_action(a.clone(), window, cx)).hint("basedpyright"));
+            items.push(
+                Choice::new(title, move |ws, window, cx| ws.run_code_action(a.clone(), window, cx))
+                    .hint("basedpyright"),
+            );
         }
         // Ignore a Ruff rule on this line.
         let mut codes: Vec<(String, usize)> = Vec::new();
@@ -280,12 +283,24 @@ impl Workspace {
             );
         }
         if self.diagnostics_for(&path).iter().any(|d| d.fix.as_ref().is_some_and(|f| f.safe)) {
-            items.push(Choice::new("Fix all auto-fixable problems in this file", |ws, window, cx| ws.fix_all(window, cx)).detail("ruff check --fix"));
+            items.push(
+                Choice::new("Fix all auto-fixable problems in this file", |ws, window, cx| ws.fix_all(window, cx))
+                    .detail("ruff check --fix"),
+            );
         }
-        items.push(Choice::new("Organize Imports", |ws, window, cx| ws.organize_imports(window, cx)).hint("Shift+Alt+O"));
-        items.push(Choice::new("Format Document", |ws, window, cx| ws.format_document(false, window, cx)).hint("Shift+Alt+F"));
+        items.push(
+            Choice::new("Organize Imports", |ws, window, cx| ws.organize_imports(window, cx)).hint("Shift+Alt+O"),
+        );
+        items.push(
+            Choice::new("Format Document", |ws, window, cx| ws.format_document(false, window, cx)).hint("Shift+Alt+F"),
+        );
         if self.code_tools.ruff_missing {
-            items.push(Choice::new("Install Ruff for more warnings and fixes", |ws, window, cx| ws.pip_install("ruff", window, cx)).detail("pip install ruff"));
+            items.push(
+                Choice::new("Install Ruff for more warnings and fixes", |ws, window, cx| {
+                    ws.pip_install("ruff", window, cx)
+                })
+                .detail("pip install ruff"),
+            );
         }
         let problems = match here.len() {
             0 => "no problems here".to_owned(),
@@ -301,7 +316,7 @@ impl Workspace {
                 return self.alert(format!("\"{}\" failed: {e}", a.title), window, cx);
             }
         }
-        if let (Some(command), Some(server)) = (a.command.clone(), self.lsp.server.clone()) {
+        if let (Some(command), Some(server)) = (a.command.clone(), self.active_language_server(cx)) {
             cx.spawn(async move |_, _| server.execute_command(&command).await).detach();
         }
     }
@@ -316,7 +331,13 @@ impl Workspace {
     }
 
     /// Which formatter to use, or None (after offering to install one, unless quiet).
-    fn pick_formatter(&mut self, have: (bool, bool), quiet: bool, window: &mut Window, cx: &mut Context<Self>) -> Option<Tool> {
+    fn pick_formatter(
+        &mut self,
+        have: (bool, bool),
+        quiet: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Tool> {
         let pref = self.effective_settings(cx).formatter;
         let (ruff, black) = have;
         let tool = match pref {
@@ -329,10 +350,15 @@ impl Workspace {
         }
         let want = if pref == Formatter::Black { Tool::Black } else { Tool::Ruff };
         let module = if want == Tool::Ruff { "ruff" } else { "black" };
-        let mut items = vec![Choice::new(format!("Install {}", want.name()), move |ws, window, cx| ws.pip_install(module, window, cx))
-            .detail(format!("pip install {module}"))];
+        let mut items = vec![Choice::new(format!("Install {}", want.name()), move |ws, window, cx| {
+            ws.pip_install(module, window, cx)
+        })
+        .detail(format!("pip install {module}"))];
         if pref == Formatter::Auto {
-            items.push(Choice::new("Install Black instead", |ws, window, cx| ws.pip_install("black", window, cx)).detail("pip install black"));
+            items.push(
+                Choice::new("Install Black instead", |ws, window, cx| ws.pip_install("black", window, cx))
+                    .detail("pip install black"),
+            );
         }
         items.push(Choice::new("Cancel", |_, _, _| {}));
         self.choose(format!("{} isn't installed in this project's Python", want.name()), items, window, cx);
@@ -386,7 +412,11 @@ impl Workspace {
                 Some(tool) => {
                     let text = before.clone();
                     let p = path.clone();
-                    Some(cx.background_executor().spawn(async move { tools.format_text(python.as_deref(), &cwd, &p, &text, tool, lines) }).await)
+                    Some(
+                        cx.background_executor()
+                            .spawn(async move { tools.format_text(python.as_deref(), &cwd, &p, &text, tool, lines) })
+                            .await,
+                    )
                 }
                 None => None,
             };
@@ -404,7 +434,16 @@ impl Workspace {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn formatted(&mut self, doc: &Entity<Document>, before: &str, version: u64, res: ToolResult, quiet: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn formatted(
+        &mut self,
+        doc: &Entity<Document>,
+        before: &str,
+        version: u64,
+        res: ToolResult,
+        quiet: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !res.ok {
             let error = res.error.unwrap_or_else(|| "Formatting failed.".into());
             if quiet {
@@ -450,10 +489,13 @@ impl Workspace {
             (d.buffer.lines().join("\n"), d.version, self.to_lsp(d, end))
         };
         let (tools, python, cwd) = (self.code_tools.tools.clone(), self.tools_python(), self.tools_cwd(&path));
-        let server = self.lsp.server.clone().filter(|s| s.knows(&path));
+        let server = self.active_language_server(cx).filter(|s| s.knows(&path));
         cx.spawn_in(window, async move |this, cx| {
             let (text, p) = (before.clone(), path.clone());
-            let res = cx.background_executor().spawn(async move { tools.ruff_fix(python.as_deref(), &cwd, &p, &text, &["I", "F401"]) }).await;
+            let res = cx
+                .background_executor()
+                .spawn(async move { tools.ruff_fix(python.as_deref(), &cwd, &p, &text, &["I", "F401"]) })
+                .await;
             if res.ok {
                 this.update(cx, |ws, cx| {
                     if doc.read(cx).doc.version == version && !ws.replace_text(&doc, &before, &res.output, cx) {
@@ -465,7 +507,8 @@ impl Workspace {
             }
             // No Ruff: the language server can sort imports (but not remove unused ones).
             if let Some(s) = server {
-                let actions = s.code_actions(&path, LspPos::new(0, 0), end16, &[], Some(&["source.organizeImports"])).await;
+                let actions =
+                    s.code_actions(&path, LspPos::new(0, 0), end16, &[], Some(&["source.organizeImports"])).await;
                 if let Some(a) = actions.into_iter().next() {
                     this.update_in(cx, |ws, window, cx| ws.run_code_action(a, window, cx)).ok();
                     return;
@@ -474,10 +517,16 @@ impl Workspace {
             this.update_in(cx, |ws, window, cx| {
                 if res.missing {
                     let items = vec![
-                        Choice::new("Install Ruff", |ws, window, cx| ws.pip_install("ruff", window, cx)).detail("pip install ruff"),
+                        Choice::new("Install Ruff", |ws, window, cx| ws.pip_install("ruff", window, cx))
+                            .detail("pip install ruff"),
                         Choice::new("Cancel", |_, _, _| {}),
                     ];
-                    ws.choose("Organize Imports uses Ruff, which isn't installed in this project's Python", items, window, cx);
+                    ws.choose(
+                        "Organize Imports uses Ruff, which isn't installed in this project's Python",
+                        items,
+                        window,
+                        cx,
+                    );
                 } else if let Some(e) = res.error {
                     ws.alert(e, window, cx);
                 }
@@ -501,7 +550,10 @@ impl Workspace {
         let (tools, python, cwd) = (self.code_tools.tools.clone(), self.tools_python(), self.tools_cwd(&path));
         cx.spawn_in(window, async move |this, cx| {
             let (text, p) = (before.clone(), path.clone());
-            let res = cx.background_executor().spawn(async move { tools.ruff_fix(python.as_deref(), &cwd, &p, &text, &[]) }).await;
+            let res = cx
+                .background_executor()
+                .spawn(async move { tools.ruff_fix(python.as_deref(), &cwd, &p, &text, &[]) })
+                .await;
             this.update_in(cx, |ws, window, cx| {
                 if !res.ok {
                     return if res.missing {

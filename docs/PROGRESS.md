@@ -47,15 +47,15 @@ with the same text, and the old source and tests. This ledger is how work resume
 - [x] T2-15 Run configurations (arguments, environment variables and working directory)
 - [x] T2-16 Python environment management (create, select and manage virtual environments)
 - [x] T2-17 Dependency management integration (pip, requirements.txt, pyproject.toml)
-- [ ] T2-18 Updates
+- [x] T2-18 Updates
 - [x] T2-19 Test runner integration (pytest, unittest)
 
 ## M3: Language and tooling (Tier 3) (27)
 
 - [x] T3-01 Language Server Protocol client (Pyright)
 - [x] T3-02 Search across the project (Ctrl+Shift+F, case / word / regex, v0.12)
-- [ ] T3-03 Git status in the file tree (M/U/A/D badges, folder dots, auto-refresh, v0.12)
-- [ ] T3-04 Debugger (DAP, debugpy): breakpoints, stepping, call stack, variables, debug console with expression evaluation, hover values, pause on uncaught exceptions
+- [x] T3-03 Git status in the file tree (M/U/A/D badges, folder dots, auto-refresh, v0.12)
+- [x] T3-04 Debugger (DAP, debugpy): breakpoints, stepping, call stack, variables, debug console with expression evaluation, hover values, pause on uncaught exceptions
 - [x] T3-05 Find references
 - [x] T3-06 Rename symbol across project
 - [x] T3-07 Go to implementation
@@ -66,19 +66,19 @@ with the same text, and the old source and tests. This ledger is how work resume
 - [x] T3-12 Format document / selection (Black, Ruff)
 - [x] T3-13 Linting integration (Ruff)
 - [x] T3-14 Semantic syntax highlighting (Pyright doesn't provide semantic tokens; needs basedpyright or our own analysis)
-- [ ] T3-15 Language-support architecture: language integrations instead of Python-specific editor logic, so several language servers can run side by side (groundwork for Tier 6.2)
-- [ ] T3-16 Git diff viewer
-- [ ] T3-17 Stage/unstage individual hunks
-- [ ] T3-18 Commit interface
-- [ ] T3-19 Branch switching and creation
-- [ ] T3-20 Merge conflict resolution
-- [ ] T3-21 Git history and file blame, with a graph view
-- [ ] T3-22 Support `input()` while debugging (run the debugged program in a terminal)
-- [ ] T3-23 Conditional breakpoints
-- [ ] T3-24 Watch expressions
-- [ ] T3-25 Option to pause on every raised exception, not just uncaught ones
-- [ ] T3-26 Breakpoint management panel (and keep breakpoints between sessions)
-- [ ] T3-27 Debug multiple processes
+- [x] T3-15 Language-support architecture: language integrations instead of Python-specific editor logic, so several language servers can run side by side (groundwork for Tier 6.2)
+- [x] T3-16 Git diff viewer
+- [x] T3-17 Stage/unstage individual hunks
+- [x] T3-18 Commit interface
+- [x] T3-19 Branch switching and creation
+- [x] T3-20 Merge conflict resolution
+- [x] T3-21 Git history and file blame, with a graph view
+- [x] T3-22 Support `input()` while debugging (run the debugged program in a terminal)
+- [x] T3-23 Conditional breakpoints
+- [x] T3-24 Watch expressions
+- [x] T3-25 Option to pause on every raised exception, not just uncaught ones
+- [x] T3-26 Breakpoint management panel (and keep breakpoints between sessions)
+- [x] T3-27 Debug multiple processes
 
 ## M4: Visual Forge (Tiers 4-5, ideas, templates) (87)
 
@@ -192,4 +192,16 @@ with the same text, and the old source and tests. This ledger is how work resume
 - 2026-11-09: Tests panel (pytest via JUnit XML, unittest via -v output; run all / failed / file / at cursor; failures link to their line). T2-19. M2 done except T2-18 (updates: with M5's installer work).
 - 2026-11-09: language server in the editor (basedpyright, installed into Forge's tools venv when missing): diagnostics with squiggles and the Problems panel, completion (auto-imports apply their import), hover, go to definition / type definition and back, references, implementations (subclasses and overrides), rename across files, symbols in the file and the project (palette search mode), call hierarchy, Outline, semantic highlighting, highlighted uses of the name under the cursor; auto-restart. T3-05, T3-06, T3-07, T3-08, T3-09, T3-14.
 - 2026-11-09: code tools: Ruff warnings as you type (with a 💡 on lines that have a fix), Quick Fix (Ruff fixes, language-server actions, ignore a rule on a line, fix all), Format Document / Selection with Ruff or Black (and format on save), Organize Imports (Ruff, or the language server without Ruff). forge-core lint (Ruff JSON, smallest line edit, noqa) and forge-run tools (tested against a real Ruff). Fixed on the way: Ruff's --range ends at the start of its end line, so the old Format Selection skipped the last selected line. T3-01, T3-10, T3-11, T3-12, T3-13.
-- Ruling: T3-15 (several language servers side by side) left open for now: the native app routes by each language's server id and keeps diagnostics per server, but runs one server slot. Revisit after Git and the debugger. Cost if wrong: a refactor of workspace/lsp.rs before a second language server is added.
+- Historical ruling (superseded by the M2/M3 completion below): T3-15 was deferred while the app had one server slot; the continuation introduced the services pool and independent integration processes.
+- 2026-11-09: T3-03 complete: connected the existing Git status parser and file-tree decorations to a background worker. Refresh on folder open, save, create/rename/delete, manual tree refresh and window focus; poll every five seconds for terminal/external changes. Requests coalesce, changing projects cancels the old worker and clears decorations. Two headless regression tests failed before implementation (missing initial badges and stale badges after changing projects), then passed against a real temporary Git repository. `cargo test --workspace --offline`: 442 passed; `cargo clippy --workspace --all-targets --offline -- -D warnings`: passed. Changed Rust files pass rustfmt; workspace-wide fmt check still reports existing formatting differences elsewhere. Existing uncommitted Git-panel and theme work preserved. Next: connect the Git panel and implement the diff viewer (T3-16), then the remaining Git actions; debugger follows Git.
+- 2026-11-09: M2/M3 continuation: Git panel connected to status, staging, commits/amend, branches and remote sync; native read-only diff/hunk, history graph, commit details and blame views added, with merge-resolution commands using editor undo. Keyboard commit conflict guard regression reproduced and fixed. Verification in progress; debugger and updates remain open.
+- 2026-11-09: Git UI complete (T3-16..T3-21): connected the existing panel to background Git commands; diffs with coloured lines and stage/unstage/discard hunk actions; commits/amend and stage-all confirmation; local/remote branch selection and creation; merge conflict navigation and current/incoming/both resolution as undoable edits; virtualised history with a painted branch graph, commit-file inspection and per-line blame. Git generates untracked-file patches so spaces and missing final newlines survive staging. Status changes reload clean buffers in the background without overwriting intervening edits; project generations discard stale job results. Existing Git backend integration tests and new native panel/workspace tests pass.
+- 2026-11-09: Debugger complete (T3-04, T3-22..T3-27): DAP request/response transport with timeouts and loopback-only child connections; debugpy launch/attach; integrated terminal requests for `input()`; continue/pause/step/restart/stop; sessions and threads, stack frames, expandable scopes/variables, console evaluation, dotted-name hover values, watches and exception filters. Breakpoints support conditions, hit counts, log messages and enabled state, follow edits/renames/deletes, and persist with watches/filters in the existing workspace format. Real debugpy integration tests cover conditional stopping, stack/scopes/variables, evaluation, stepping, terminal input, raised exceptions and multiprocessing attachment. A headless GPUI test also starts debugpy, types into the native terminal and verifies the paused source line, variables and watch value.
+- 2026-11-09: T3-15 complete: `forge-lsp::services` owns multiple servers, routes documents/queries by their owner, merges diagnostics and project symbols, and syncs/flushes/saves each server's documents. The app has independent integration process/event-pump slots and generic editor routing; basedpyright remains the only bundled language integration. The two-server regression test initially exposed cross-language document leakage in `LspServer::sync_docs`; language filtering fixed it. Python rename validation and implementation fallbacks are integration hooks rather than restrictions on other servers.
+- 2026-11-09: T2-18 complete: `forge-update` uses pinned Velopack 1.2.161 for installed-app checks, background download, install after all windows close, and restart through the normal unsaved-file close path. Automatic checks run after startup and every six hours when enabled; manual checks, download/restart choices, status-bar notices, Settings information and saved release notes/Welcome notices are connected. Source/portable copies offer the releases page. Version/release parsing and one-time upgrade notes have unit tests. Installer packaging, a published native feed, Windows/Linux tester rounds and the installed 1.0.0 -> 1.0.1 update-path test remain M5 work, not claimed as verified here. API reference: https://docs.rs/velopack/1.2.161/velopack/struct.UpdateManager.html.
+- Ruling: use `https://github.com/louisatron84/forge-releases` as the native releases-only repository, overridable at build time with `FORGE_RELEASE_REPOSITORY`. This follows PLAN.md's public-feed option and avoids the frozen Electron feed; publishing/configuring the release host remains M5. Cost if changed: rebuild with the chosen repository URL.
+- 2026-11-09: M2 and M3 implementation complete. Final checks: `cargo test --workspace --offline` **461 passed, 0 failed**, including real Git/Python/debugpy and headless GPUI checks; `cargo clippy --workspace --all-targets --offline -- -D warnings` passed; `cargo fmt --all -- --check` and `git diff --check` passed. Workspace formatting differences mentioned earlier have been resolved. Self-review completed without subagents, following this repo's no-subagents rule. Changes remain on `native` for owner review; no merge, release or publication performed. Next milestone: M4.
+- 2026-11-09: Investigated the reported file creation/renaming and unexpected repository workspace. Current-source keyboard and mouse creation/rename flows passed before changes; the running `target/debug/forge.exe` was an older build (15:40), while tests had built a separate test executable. Startup also restored `forge-native` from the real recent-project list because reopening was on by default. A new startup regression test reproduced that unwanted automatic restoration. Per the user's requested behavior, reopening is now opt-in; explicit saved preferences and command-line folder selection still work. The Files panel now offers Open Folder / New Project Folder without an open workspace, an Open action with a workspace, and the current project path. Welcome uses the clearer New Project Folder label. Recent projects and their data are preserved.
+- 2026-11-09: Added seven regression/interaction tests covering fresh startup, explicitly enabled restoration, standalone file saving, choosing/creating a project folder, mouse and keyboard file creation, editing the created document, and renaming with extension preservation. Workspace tests now include the same toolkit Root wrapper as the running app. `cargo test --workspace --offline`: **468 passed, 0 failed**; Clippy, rustfmt and diff checks passed. The normal build could not replace `forge.exe` because the user had it open; built the updated runnable copy as `target/debug/forge-current.exe` with `cargo rustc -p forge-app --offline --bin forge -- -o C:\Users\louis\forge-native\target\debug\forge-current.exe` (successful; rustc emitted the two expected custom-output-name warnings). Close the old app and use this copy, or rebuild normally after closing it. No manual app launch or unsaved-work interruption performed.
+- 2026-11-09: The user's screenshot prompted a geometry-level reproduction of the empty orange name box. **Confirmed source bug:** in a 200px Files panel, the virtual list's name row shrank to its intrinsic width, leaving the actual text viewport **0px wide**. Previous keystroke tests could type into the focused but invisible input and therefore missed this. Added an explicit full-width constraint to the name row. A second failing assertion found its height was 36px in a 22px virtual row because the toolkit's `Input::h` only configures multiline inputs; setting the single-line frame height through `Styled` and removing vertical padding fixes overlap. The new Root-wrapped, 200px-wide regression asserts usable viewport dimensions and row height, then clicks, types, creates both a file and folder, and renames the folder. It failed before each fix and passes afterward. This supersedes treating the old executable as an explanation for the creation symptom.
+- 2026-11-09: Name-box fix verified: `cargo test --workspace --offline` **469 passed, 0 failed**; Clippy with warnings denied, rustfmt and diff checks passed. `cargo build -p forge-app --offline` succeeded, and both `target/debug/forge.exe` and the previously shared `forge-current.exe` have been refreshed to the same fixed build. No manual app launch performed.

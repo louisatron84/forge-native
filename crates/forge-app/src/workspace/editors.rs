@@ -34,6 +34,9 @@ impl Workspace {
     }
 
     pub(super) fn render_editor_area(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        if self.git_inspect.read(cx).open {
+            return div().size_full().child(self.git_inspect.clone()).into_any_element();
+        }
         let t = cx.global::<ForgeTheme>().0.clone();
         if self.welcome_visible(cx) {
             return self.render_welcome(window, cx);
@@ -163,7 +166,7 @@ impl Workspace {
                 }),
             ),
             act(
-                "New Folder…",
+                "New Project Folder…",
                 "file.newFolder",
                 Some(if folder.is_some() { "in the project" } else { "a new project folder, then open it" }),
             ),
@@ -220,6 +223,21 @@ impl Workspace {
             .size_full()
             .overflow_y_scroll()
             .bg(t.bg)
+            .when_some(self.release_notes.clone(), |d, release| {
+                d.child(
+                    div()
+                        .id("welcome-whats-new")
+                        .p(px(16.0))
+                        .bg(t.bg_panel)
+                        .cursor_pointer()
+                        .child(format!(
+                            "What's new in Forge {} — {}",
+                            release.version,
+                            release.notes.lines().next().unwrap_or("Read release notes")
+                        ))
+                        .on_click(cx.listener(|this, _, window, cx| this.show_release_notes(window, cx))),
+                )
+            })
             .child(
                 div()
                     .max_w(px(860.0))

@@ -224,6 +224,8 @@ pub struct EditorView {
     pub(crate) occurrences: std::sync::Arc<Vec<(Pos, Pos, bool)>>,
     /// The line with a 💡 (it has an automatic fix).
     pub(crate) lightbulb: Option<usize>,
+    pub(crate) debug_lines: Vec<(usize, bool)>,
+    pub(crate) debug_stopped: Option<usize>,
     hover_pos: Option<Pos>,
     hover_shown: bool,
     hover_task: Option<gpui_kit::Task<()>>,
@@ -268,6 +270,8 @@ impl EditorView {
             diagnostics: std::sync::Arc::new(Vec::new()),
             occurrences: std::sync::Arc::new(Vec::new()),
             lightbulb: None,
+            debug_lines: Vec::new(),
+            debug_stopped: None,
             hover_pos: None,
             hover_shown: false,
             hover_task: None,

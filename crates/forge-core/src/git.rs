@@ -100,9 +100,15 @@ pub fn parse_status_v2(out: &str) -> RepoStatus {
         }
         let chars: Vec<char> = p.chars().take(4).collect();
         match chars.first() {
-            Some('?') => s.unstaged.push(FileChange { path: p.get(2..).unwrap_or("").to_owned(), from: None, kind: ChangeKind::Untracked }),
+            Some('?') => s.unstaged.push(FileChange {
+                path: p.get(2..).unwrap_or("").to_owned(),
+                from: None,
+                kind: ChangeKind::Untracked,
+            }),
             // u XY sub m1 m2 m3 mW h1 h2 h3 path
-            Some('u') => s.conflicts.push(FileChange { path: fields(p, 10).to_owned(), from: None, kind: ChangeKind::Conflict }),
+            Some('u') => {
+                s.conflicts.push(FileChange { path: fields(p, 10).to_owned(), from: None, kind: ChangeKind::Conflict })
+            }
             Some(t @ ('1' | '2')) if chars.len() == 4 => {
                 let (x, y) = (chars[2], chars[3]);
                 // 1 XY sub mH mI mW hH hI path   |   2 XY sub mH mI mW hH hI Xscore path \0 origPath
@@ -249,7 +255,13 @@ pub fn parse_diff(text: &str) -> Vec<FileDiff> {
             _ => {
                 old_no += 1;
                 new_no += 1;
-                DiffLine { kind: LineKind::Context, text, old_no: Some(old_no - 1), new_no: Some(new_no - 1), no_newline: false }
+                DiffLine {
+                    kind: LineKind::Context,
+                    text,
+                    old_no: Some(old_no - 1),
+                    new_no: Some(new_no - 1),
+                    no_newline: false,
+                }
             }
         };
         hunk.lines.push(l);
@@ -439,7 +451,11 @@ mod tests {
         );
         assert_eq!(
             s.unstaged,
-            vec![fc("README.md", ChangeKind::Modified), fc("both.py", ChangeKind::Modified), fc("notes.txt", ChangeKind::Untracked)]
+            vec![
+                fc("README.md", ChangeKind::Modified),
+                fc("both.py", ChangeKind::Modified),
+                fc("notes.txt", ChangeKind::Untracked)
+            ]
         );
         assert_eq!(s.conflicts, vec![fc("clash.py", ChangeKind::Conflict)]);
     }
@@ -483,10 +499,23 @@ index 0000000..3333333
         let files = parse_diff(DIFF);
         assert_eq!(files.len(), 2);
         let (app, added) = (&files[0], &files[1]);
-        assert_eq!((app.old_path.as_deref(), app.new_path.as_deref(), app.binary), (Some("app.py"), Some("app.py"), false));
+        assert_eq!(
+            (app.old_path.as_deref(), app.new_path.as_deref(), app.binary),
+            (Some("app.py"), Some("app.py"), false)
+        );
         assert_eq!(app.hunks.len(), 2);
-        let rows: Vec<(char, Option<usize>, Option<usize>)> = app.hunks[0].lines.iter().map(|l| (l.kind.prefix(), l.old_no, l.new_no)).collect();
-        assert_eq!(rows, vec![(' ', Some(1), Some(1)), ('-', Some(2), None), ('+', None, Some(2)), (' ', Some(3), Some(3)), (' ', Some(4), Some(4))]);
+        let rows: Vec<(char, Option<usize>, Option<usize>)> =
+            app.hunks[0].lines.iter().map(|l| (l.kind.prefix(), l.old_no, l.new_no)).collect();
+        assert_eq!(
+            rows,
+            vec![
+                (' ', Some(1), Some(1)),
+                ('-', Some(2), None),
+                ('+', None, Some(2)),
+                (' ', Some(3), Some(3)),
+                (' ', Some(4), Some(4))
+            ]
+        );
         let h = &app.hunks[1];
         assert_eq!((h.old_start, h.old_lines, h.new_start, h.new_lines), (10, 3, 10, 4));
         assert_eq!(h.lines[3].text, "end");
@@ -527,7 +556,14 @@ index 0000000..3333333
 
     #[test]
     fn branches_are_read_local_and_remote() {
-        let out = ["refs/heads/main\0*\0origin/main", "refs/heads/feature/x\0 \0", "refs/remotes/origin/HEAD\0 \0", "refs/remotes/origin/main\0 \0", ""].join("\n");
+        let out = [
+            "refs/heads/main\0*\0origin/main",
+            "refs/heads/feature/x\0 \0",
+            "refs/remotes/origin/HEAD\0 \0",
+            "refs/remotes/origin/main\0 \0",
+            "",
+        ]
+        .join("\n");
         assert_eq!(
             parse_branches(&out),
             vec![
@@ -543,7 +579,9 @@ index 0000000..3333333
         for ok in ["main", "feature/login", "fix-1.2", "user/louis/thing"] {
             assert!(is_valid_branch_name(ok), "{ok}");
         }
-        for bad in ["", "-x", "a..b", "a b", "a~1", "x.lock", "a/", "a//b", "@", "a:b", "what?", "/a", "a.", "a@{b", "a\u{7f}"] {
+        for bad in
+            ["", "-x", "a..b", "a b", "a~1", "x.lock", "a/", "a//b", "@", "a:b", "what?", "/a", "a.", "a@{b", "a\u{7f}"]
+        {
             assert!(!is_valid_branch_name(bad), "{bad:?}");
         }
     }
@@ -557,11 +595,19 @@ index 0000000..3333333
         let e = |x, y, path: &str| PorcelainEntry { x, y, path: path.into(), from: None };
         assert_eq!(
             parse_porcelain(&z(&[" M src/app.py", "?? new file.py", "A  added.py", " D gone.py"])),
-            vec![e(' ', 'M', "src/app.py"), e('?', '?', "new file.py"), e('A', ' ', "added.py"), e(' ', 'D', "gone.py")]
+            vec![
+                e(' ', 'M', "src/app.py"),
+                e('?', '?', "new file.py"),
+                e('A', ' ', "added.py"),
+                e(' ', 'D', "gone.py")
+            ]
         );
         assert_eq!(
             parse_porcelain(&z(&["R  new.py", "old.py", " M other.py"])),
-            vec![PorcelainEntry { x: 'R', y: ' ', path: "new.py".into(), from: Some("old.py".into()) }, e(' ', 'M', "other.py")]
+            vec![
+                PorcelainEntry { x: 'R', y: ' ', path: "new.py".into(), from: Some("old.py".into()) },
+                e(' ', 'M', "other.py")
+            ]
         );
         assert_eq!(parse_porcelain(""), Vec::new());
     }
@@ -588,9 +634,16 @@ index 0000000..3333333
 
     #[test]
     fn status_map_gives_absolute_paths_and_marks_parent_folders() {
-        let map = build_status_map("C:\\repo", "C:\\repo\\sub", &parse_porcelain(&z(&[" M sub/pkg/a.py", "?? sub/b.py", " M outside.py"])));
+        let map = build_status_map(
+            "C:\\repo",
+            "C:\\repo\\sub",
+            &parse_porcelain(&z(&[" M sub/pkg/a.py", "?? sub/b.py", " M outside.py"])),
+        );
         let files: Vec<(&str, ChangeKind)> = map.files.iter().map(|(k, v)| (k.as_str(), *v)).collect();
-        assert_eq!(files, vec![("C:\\repo\\sub\\b.py", ChangeKind::Untracked), ("C:\\repo\\sub\\pkg\\a.py", ChangeKind::Modified)]);
+        assert_eq!(
+            files,
+            vec![("C:\\repo\\sub\\b.py", ChangeKind::Untracked), ("C:\\repo\\sub\\pkg\\a.py", ChangeKind::Modified)]
+        );
         assert_eq!(map.folders, vec!["C:\\repo\\sub\\pkg".to_owned()]);
         let map = build_status_map("/r", "/r", &parse_porcelain(&z(&["A  x/y.py"])));
         assert_eq!(map.files.get("/r/x/y.py"), Some(&ChangeKind::Added));

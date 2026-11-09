@@ -78,7 +78,11 @@ fn error_text(o: &Output) -> String {
     let text = if o.stderr.trim().is_empty() { o.stdout.trim() } else { o.stderr.trim() };
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
     let tail = lines[lines.len().saturating_sub(4)..].join("\n");
-    if tail.is_empty() { "it failed".to_owned() } else { tail }
+    if tail.is_empty() {
+        "it failed".to_owned()
+    } else {
+        tail
+    }
 }
 
 impl Tools {
@@ -110,7 +114,14 @@ impl Tools {
     }
 
     /// Run a tool with its own arguments on `text`.
-    fn tool(&self, python: Option<&str>, cwd: &Path, tool: Tool, args: &[&str], text: &str) -> Result<Output, ToolResult> {
+    fn tool(
+        &self,
+        python: Option<&str>,
+        cwd: &Path,
+        tool: Tool,
+        args: &[&str],
+        text: &str,
+    ) -> Result<Output, ToolResult> {
         let Some((cmd, mut all)) = self.launcher(python, tool, cwd) else { return Err(ToolResult::missing()) };
         all.extend(args.iter().map(|a| (*a).to_owned()));
         Ok(run(&cmd, &all, cwd, text, TIMEOUT))
@@ -184,7 +195,9 @@ impl Tools {
         let msg = error_text(&o);
         // Older versions don't know about formatting part of a file.
         let lower = msg.to_lowercase();
-        if lines.is_some() && ["range", "line-ranges", "unexpected argument", "no such option"].iter().any(|w| lower.contains(w)) {
+        if lines.is_some()
+            && ["range", "line-ranges", "unexpected argument", "no such option"].iter().any(|w| lower.contains(w))
+        {
             return ToolResult::failed(format!(
                 "This version of {} can't format just a selection; upgrade it, or format the whole file.",
                 tool.name()
@@ -222,7 +235,13 @@ mod unit {
         let Some(t) = ruff() else { return eprintln!("ruff isn't installed: skipped") };
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a.py");
-        let r = t.ruff_fix(None, dir.path(), &path.to_string_lossy(), "import sys\nimport os\n\nprint(sys.argv)\n", &["I", "F401"]);
+        let r = t.ruff_fix(
+            None,
+            dir.path(),
+            &path.to_string_lossy(),
+            "import sys\nimport os\n\nprint(sys.argv)\n",
+            &["I", "F401"],
+        );
         assert!(r.ok, "{r:?}");
         assert_eq!(r.output, "import sys\n\nprint(sys.argv)\n");
     }
@@ -253,7 +272,8 @@ mod unit {
 
     #[test]
     fn error_text_keeps_the_last_four_lines() {
-        let o = Output { code: Some(2), stdout: "out".into(), stderr: "1\n2\n\n3\n4\n5\n".into(), ..Default::default() };
+        let o =
+            Output { code: Some(2), stdout: "out".into(), stderr: "1\n2\n\n3\n4\n5\n".into(), ..Default::default() };
         assert_eq!(error_text(&o), "2\n3\n4\n5");
         let o = Output { code: Some(2), ..Default::default() };
         assert_eq!(error_text(&o), "it failed");
