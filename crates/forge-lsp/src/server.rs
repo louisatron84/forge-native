@@ -28,6 +28,10 @@ pub struct Diagnostic {
     pub server: Option<String>,
     /// The server's own diagnostic object (sent back when asking for code actions).
     pub raw: Value,
+    /// Ruff's automatic fix for it (character positions in the file).
+    pub fix: Option<forge_core::lint::LintFix>,
+    /// Where the rule is explained.
+    pub url: Option<String>,
 }
 
 /// A code action from the language server (quick fix, organise imports...).
@@ -180,6 +184,8 @@ impl LspServer {
                             .map(|c| c.as_str().map(str::to_owned).unwrap_or_else(|| c.to_string())),
                         server: Some(id.to_owned()),
                         raw: d.clone(),
+                        fix: None,
+                        url: None,
                     })
                 })
                 .collect();
@@ -777,6 +783,8 @@ mod tests {
             code: None,
             server: None,
             raw: Value::Null,
+            fix: None,
+            url: None,
         };
         let merged = merge_diagnostics(&[d(1, 0, 1)], &[d(1, 0, 2), d(2, 0, 2)]);
         assert_eq!(merged.iter().map(|x| x.start.line).collect::<Vec<_>>(), [1, 2]);

@@ -168,6 +168,8 @@ pub enum EditorEvent {
     Hover(Pos, gpui_kit::Point<Pixels>),
     /// The mouse moved off what was hovered.
     HoverEnd,
+    /// The 💡 in the gutter was clicked.
+    Lightbulb(usize),
 }
 
 impl EventEmitter<EditorEvent> for EditorView {}
@@ -220,6 +222,8 @@ pub struct EditorView {
     pub(crate) diagnostics: std::sync::Arc<Vec<EditorDiagnostic>>,
     /// Other uses of the name under the cursor: (start, end, is it written to).
     pub(crate) occurrences: std::sync::Arc<Vec<(Pos, Pos, bool)>>,
+    /// The line with a 💡 (it has an automatic fix).
+    pub(crate) lightbulb: Option<usize>,
     hover_pos: Option<Pos>,
     hover_shown: bool,
     hover_task: Option<gpui_kit::Task<()>>,
@@ -263,6 +267,7 @@ impl EditorView {
             matches: std::sync::Arc::new(Vec::new()),
             diagnostics: std::sync::Arc::new(Vec::new()),
             occurrences: std::sync::Arc::new(Vec::new()),
+            lightbulb: None,
             hover_pos: None,
             hover_shown: false,
             hover_task: None,
@@ -471,6 +476,14 @@ impl EditorView {
     pub fn set_matches(&mut self, matches: Vec<forge_text::find::Match>, cx: &mut Context<Self>) {
         self.matches = std::sync::Arc::new(matches);
         cx.notify();
+    }
+
+    /// Show the 💡 on this line (None: nowhere).
+    pub fn set_lightbulb(&mut self, line: Option<usize>, cx: &mut Context<Self>) {
+        if self.lightbulb != line {
+            self.lightbulb = line;
+            cx.notify();
+        }
     }
 
     /// Highlight the other uses of the name under the cursor; empty to clear.
@@ -1136,7 +1149,11 @@ impl EditorView {
         }
         let hit = layout.hit_test(event.position, &document.read(cx).doc.buffer, self.tab_size);
         if hit.in_gutter {
-            if hit.on_fold_marker {
+            let on_bulb = self.lightbulb == Some(hit.pos.line)
+                && f32::from(event.position.x) < f32::from(layout.bounds.left()) + element::LIGHTBULB_WIDTH;
+            if on_bulb {
+                cx.emit(EditorEvent::Lightbulb(hit.pos.line));
+            } else if hit.on_fold_marker {
                 self.toggle_fold(hit.pos.line, cx);
             } else {
                 cx.emit(EditorEvent::GutterClick(hit.pos.line));

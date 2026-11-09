@@ -8,6 +8,7 @@ pub mod dock;
 pub mod dotenv;
 pub mod fuzzy;
 pub mod keybindings;
+pub mod lint;
 pub mod names;
 pub mod output;
 pub mod project_state;

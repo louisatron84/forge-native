@@ -61,6 +61,7 @@ impl Workspace {
                 }
                 ws.pyenv.current = found;
                 ws.pyenv.checked = true;
+                ws.code_tools_changed(cx);
                 if ws.pyenv.current.is_none() {
                     ws.pyenv.missing.clear();
                 }
@@ -229,6 +230,7 @@ impl Workspace {
             this.update_in(cx, |ws, window, cx| {
                 ws.pyenv.current = found;
                 ws.pyenv.checked = true;
+                ws.code_tools_changed(cx);
                 if let Some(d) = deps {
                     ws.pyenv.missing = d.missing;
                     ws.pyenv.sources = d.sources;

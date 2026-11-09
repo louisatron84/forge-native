@@ -320,26 +320,15 @@ impl Workspace {
         for (path, list) in edits {
             let open = self.docs.values().find(|d| same_path(d.read(cx).doc.path(), path)).cloned();
             match open {
-                Some(doc) => doc.update(cx, |d, cx| {
-                    d.edit(None, cx, |doc| {
-                        // Convert to character positions, then apply from the end.
-                        let mut converted: Vec<(Pos, Pos, String)> = list
-                            .iter()
-                            .map(|e| (from_lsp(doc.buffer.line(e.start.line), e.start), from_lsp(doc.buffer.line(e.end.line), e.end), e.text.clone()))
-                            .collect();
-                        converted.sort_by_key(|c| std::cmp::Reverse(c.0));
-                        let first = converted.last().map(|c| c.0).unwrap_or_default();
-                        doc.history.transact(&mut doc.buffer, forge_text::EditKind::Other, first, |b| {
-                            let mut at = first;
-                            for (s, e, t) in &converted {
-                                let (s, e) = (b.clamp(*s), b.clamp(*e));
-                                b.delete(s, e);
-                                at = b.insert(s, t);
-                            }
-                            at
-                        });
-                    });
-                }),
+                Some(doc) => {
+                    let converted: Vec<(Pos, Pos, String)> = {
+                        let d = &doc.read(cx).doc;
+                        list.iter()
+                            .map(|e| (from_lsp(d.buffer.line(e.start.line), e.start), from_lsp(d.buffer.line(e.end.line), e.end), e.text.clone()))
+                            .collect()
+                    };
+                    self.apply_doc_edits(&doc, converted, cx);
+                }
                 None => {
                     let text = std::fs::read_to_string(path).map_err(|e| format!("Couldn't read {path}: {e}"))?;
                     std::fs::write(path, apply_edits(&text, list)).map_err(|e| format!("Couldn't write {path}: {e}"))?;
@@ -352,6 +341,31 @@ impl Workspace {
         }
         self.after_edits_applied(cx);
         Ok(on_disk)
+    }
+
+    /// Edit an open document as one undo step (character positions, in any order,
+    /// not overlapping).
+    pub(crate) fn apply_doc_edits(&mut self, doc: &gpui_kit::Entity<crate::document::Document>, mut edits: Vec<(Pos, Pos, String)>, cx: &mut Context<Self>) {
+        if edits.is_empty() {
+            return;
+        }
+        // Applied from the end, so earlier positions stay valid.
+        edits.sort_by_key(|c| std::cmp::Reverse(c.0));
+        doc.update(cx, |d, cx| {
+            d.edit(None, cx, |doc| {
+                let first = edits.last().map(|c| c.0).unwrap_or_default();
+                doc.history.transact(&mut doc.buffer, forge_text::EditKind::Other, first, |b| {
+                    let mut at = first;
+                    for (s, e, t) in &edits {
+                        let (s, e) = (b.clamp(*s), b.clamp(*e));
+                        b.delete(s, e);
+                        at = b.insert(s, t);
+                    }
+                    at
+                });
+            });
+        });
+        self.after_edits_applied(cx);
     }
 
     fn after_edits_applied(&mut self, cx: &mut Context<Self>) {

@@ -166,9 +166,7 @@ impl Workspace {
                 let _ = app_state::state(cx).user.clear_recent();
                 self.refresh_recent(cx);
             }
-            "file.save" => {
-                self.save(None, window, cx);
-            }
+            "file.save" => self.save_active(window, cx),
             "file.new" => {
                 if self.root.is_some() {
                     self.tasks.reveal("files");
@@ -287,6 +285,11 @@ impl Workspace {
             "nav.projectSymbol" => self.go_to_project_symbol(window, cx),
             "nav.callHierarchy" => self.show_call_hierarchy(window, cx),
             "editor.renameSymbol" => self.rename_symbol(window, cx),
+            "editor.quickFix" => self.quick_fix(window, cx),
+            "editor.format" => self.format_document(false, window, cx),
+            "editor.formatSelection" => self.format_document(true, window, cx),
+            "editor.organizeImports" => self.organize_imports(window, cx),
+            "editor.fixAll" => self.fix_all(window, cx),
             "python.restartServer" => self.restart_language_server(window, cx),
 
             // ---------- Python ----------

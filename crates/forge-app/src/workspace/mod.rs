@@ -5,6 +5,7 @@
 
 mod assist;
 mod chrome;
+mod code_tools;
 mod commands;
 mod dock;
 mod editors;
@@ -114,6 +115,7 @@ pub struct Workspace {
     /// What the highlighted uses of the name under the cursor are for.
     pub(crate) occurrence_key: String,
     pub(crate) occurrence_task: Option<gpui_kit::Task<()>>,
+    pub(crate) code_tools: code_tools::CodeToolsState,
     pub(crate) lsp: lsp::LspState,
     pub(crate) completion: assist::CompletionState,
     pub(crate) hover: assist::HoverState,
@@ -271,6 +273,7 @@ impl Workspace {
             outline_task: None,
             occurrence_key: String::new(),
             occurrence_task: None,
+            code_tools: code_tools::CodeToolsState::default(),
             lsp: lsp::LspState::default(),
             completion: assist::CompletionState::default(),
             hover: assist::HoverState::default(),
@@ -363,6 +366,8 @@ impl Workspace {
     /// Apply the settings to the editors (font size, tab size...).
     pub fn apply_settings(&mut self, cx: &mut Context<Self>) {
         let s = self.effective_settings(cx);
+        // Ruff warnings follow lintWithRuff.
+        self.lint_sync(cx);
         let set_keys: Vec<&str> = {
             let v = serde_json::to_value(&self.project_settings).unwrap_or_default();
             PROJECT_SETTING_KEYS.iter().copied().filter(|k| v.get(*k).is_some_and(|x| !x.is_null())).collect()
@@ -515,6 +520,7 @@ impl Workspace {
                     self.outline_edited(cx);
                     self.update_occurrences(cx);
                 }
+                self.lint_sync(cx);
                 self.find_bar.update(cx, |f, cx| f.refresh(window, cx));
                 self.backup_soon(cx);
                 self.update_title(window, cx);
@@ -524,6 +530,7 @@ impl Workspace {
                 self.refilter_completion(cx);
                 if group == self.tabs.active_group {
                     self.update_occurrences(cx);
+                    self.update_lightbulb(cx);
                     if self.tasks.is_shown("outline") {
                         self.highlight_outline(cx);
                     }
@@ -539,6 +546,7 @@ impl Workspace {
             EditorEvent::CtrlClick(pos) => self.go_to_definition(Some(*pos), window, cx),
             EditorEvent::Hover(pos, at) => self.show_hover(group, *pos, *at, cx),
             EditorEvent::HoverEnd => self.hide_hover(cx),
+            EditorEvent::Lightbulb(_) => self.quick_fix(window, cx),
             EditorEvent::GutterClick(_) => {}
         }
     }
@@ -934,6 +942,8 @@ impl Workspace {
         self.refresh_semantic_tokens(cx);
         self.outline_file_changed(cx);
         self.update_occurrences(cx);
+        self.lint_sync(cx);
+        self.update_lightbulb(cx);
         let active_editor = self.editors[self.tabs.active_group.min(1)].downgrade();
         self.find_bar.update(cx, |f, cx| {
             f.switch_editor(Some(active_editor), cx);

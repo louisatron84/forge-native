@@ -18,6 +18,8 @@ use std::time::Duration;
 /// Space between the gutter and the text.
 const PAD_LEFT: f32 = 8.0;
 const GUTTER_PAD: f32 = 10.0;
+/// Room for the 💡 at the gutter's left edge (clicks there open Quick Fix).
+pub(crate) const LIGHTBULB_WIDTH: f32 = 14.0;
 const FOLD_MARK_W: f32 = 14.0;
 pub const MINIMAP_WIDTH: f32 = 90.0;
 /// Pixels per row in the minimap when the whole file fits.
@@ -356,6 +358,7 @@ impl gpui_kit::Element for EditorElement {
                 .collect()
         });
         let mut row_layouts = Vec::with_capacity(lines_and_tokens.len());
+        let lightbulb = self.editor.read(cx).lightbulb;
         let mut gutter = Vec::new();
         let mut placeholders = Vec::new();
         for (i, (line, text, tokens, foldable)) in lines_and_tokens.iter().enumerate() {
@@ -370,6 +373,10 @@ impl gpui_kit::Element for EditorElement {
             let num_shaped = shape(number.clone(), &[plain_run(number.len(), color)]);
             let num_x = gutter_right - FOLD_MARK_W - GUTTER_PAD - f32::from(num_shaped.width);
             gutter.push((num_shaped, point(px(num_x), px(y))));
+            if lightbulb == Some(*line) {
+                let bulb = shape("💡".into(), &[plain_run("💡".len(), theme.fg)]);
+                gutter.push((bulb, point(px(left), px(y))));
+            }
             if *foldable || folded {
                 let mark = if folded { "▸" } else { "▾" };
                 let m = shape(mark.into(), &[plain_run(mark.len(), theme.fg_muted)]);
