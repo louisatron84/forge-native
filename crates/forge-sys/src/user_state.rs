@@ -1,0 +1,342 @@
+//! Small JSON files the app keeps between sessions (in its data folder):
+//!   settings.json         your settings
+//!   keybindings.json      your keyboard shortcut changes
+//!   layouts.json          your workspace arrangement for each task
+//!   recent.json           recently opened folders
+//!   workspaces/<id>.json  each project's tabs, layout and terminals
+//! and the project's own `<project>/.forge/settings.json`, run.json and boxes.json.
+//! Replaces `src/main/userState.ts`.
+
+use crate::backups::backup_name;
+use forge_core::keybindings::{keybindings_json, normalize_keybindings, KeyOverrides};
+use forge_core::project_state::{add_recent, normalize_recent, normalize_workspace_state, remove_recent, WorkspaceState};
+use forge_core::settings::{normalize_project_settings, normalize_settings, ProjectSettings, Settings, PROJECT_DIR, PROJECT_SETTINGS_FILE};
+use serde_json::Value;
+use std::io;
+use std::path::{Path, PathBuf};
+
+/// Parsed JSON, or why it couldn't be read.
+#[derive(Debug)]
+pub enum JsonFile {
+    Missing,
+    Value(Value),
+    /// The file exists but couldn't be read or isn't valid JSON.
+    Error(String),
+}
+
+impl JsonFile {
+    pub fn value(&self) -> Value {
+        match self {
+            JsonFile::Value(v) => v.clone(),
+            _ => Value::Null,
+        }
+    }
+
+    pub fn error(&self) -> Option<&str> {
+        match self {
+            JsonFile::Error(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+pub fn read_json(path: &Path) -> JsonFile {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return JsonFile::Missing,
+        Err(e) => return JsonFile::Error(e.to_string()),
+    };
+    if text.trim().is_empty() {
+        return JsonFile::Value(Value::Object(Default::default()));
+    }
+    match serde_json::from_str(&text) {
+        Ok(v) => JsonFile::Value(v),
+        Err(e) => JsonFile::Error(format!("It isn't valid JSON: {e}")),
+    }
+}
+
+pub fn write_json(path: &Path, value: &Value) -> io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut text = serde_json::to_string_pretty(value).map_err(io::Error::other)?;
+    text.push('\n');
+    std::fs::write(path, text)
+}
+
+/// Forge's data folder: `%APPDATA%\Forge` on Windows, `~/.config/forge` on
+/// Linux (`FORGE_USER_DATA` overrides it, for tests).
+pub fn data_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("FORGE_USER_DATA") {
+        return PathBuf::from(dir);
+    }
+    let base = dirs::config_dir().unwrap_or_else(std::env::temp_dir);
+    base.join(if cfg!(windows) { "Forge" } else { "forge" })
+}
+
+/// Where the Electron app kept its data (to import on first run).
+pub fn legacy_data_dir() -> Option<PathBuf> {
+    Some(dirs::config_dir()?.join("ideforfun"))
+}
+
+pub struct UserState {
+    dir: PathBuf,
+}
+
+impl UserState {
+    pub fn new(dir: impl Into<PathBuf>) -> Self {
+        Self { dir: dir.into() }
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    pub fn settings_path(&self) -> PathBuf {
+        self.dir.join("settings.json")
+    }
+
+    /// Your settings (a missing or broken file gives the defaults; the error is returned too).
+    pub fn settings(&self) -> (Settings, Option<String>) {
+        let f = read_json(&self.settings_path());
+        (normalize_settings(&f.value()), f.error().map(str::to_owned))
+    }
+
+    pub fn save_settings(&self, settings: &Settings) -> io::Result<()> {
+        write_json(&self.settings_path(), &serde_json::to_value(settings).map_err(io::Error::other)?)
+    }
+
+    pub fn keybindings_path(&self) -> PathBuf {
+        self.dir.join("keybindings.json")
+    }
+
+    pub fn keybindings(&self) -> (KeyOverrides, Option<String>) {
+        let f = read_json(&self.keybindings_path());
+        (normalize_keybindings(&f.value()), f.error().map(str::to_owned))
+    }
+
+    /// Save shortcut changes ([] is written as null: "no shortcut").
+    pub fn save_keybindings(&self, overrides: &KeyOverrides) -> io::Result<()> {
+        write_json(&self.keybindings_path(), &keybindings_json(overrides))
+    }
+
+    /// Create keybindings.json if needed (for editing it by hand).
+    pub fn ensure_keybindings_file(&self) -> io::Result<PathBuf> {
+        let path = self.keybindings_path();
+        if matches!(read_json(&path), JsonFile::Missing) {
+            write_json(&path, &Value::Object(Default::default()))?;
+        }
+        Ok(path)
+    }
+
+    /// Workspace arrangements per task (normalized by the dock model).
+    pub fn layouts(&self) -> Value {
+        read_json(&self.dir.join("layouts.json")).value()
+    }
+
+    pub fn save_layouts(&self, layouts: &Value) -> io::Result<()> {
+        write_json(&self.dir.join("layouts.json"), layouts)
+    }
+
+    fn recent_path(&self) -> PathBuf {
+        self.dir.join("recent.json")
+    }
+
+    pub fn recent(&self) -> Vec<String> {
+        normalize_recent(&read_json(&self.recent_path()).value())
+    }
+
+    pub fn add_recent(&self, folder: &str) -> io::Result<Vec<String>> {
+        let list = add_recent(&self.recent(), folder);
+        write_json(&self.recent_path(), &Value::from(list.clone()))?;
+        Ok(list)
+    }
+
+    pub fn remove_recent(&self, folder: &str) -> io::Result<Vec<String>> {
+        let list = remove_recent(&self.recent(), folder);
+        write_json(&self.recent_path(), &Value::from(list.clone()))?;
+        Ok(list)
+    }
+
+    pub fn clear_recent(&self) -> io::Result<()> {
+        write_json(&self.recent_path(), &Value::Array(Vec::new()))
+    }
+
+    fn workspace_path(&self, root: &str) -> PathBuf {
+        self.dir.join("workspaces").join(backup_name(root))
+    }
+
+    pub fn workspace(&self, root: &str) -> Option<WorkspaceState> {
+        match read_json(&self.workspace_path(root)) {
+            JsonFile::Value(v) => Some(normalize_workspace_state(&v)),
+            _ => None,
+        }
+    }
+
+    pub fn save_workspace(&self, root: &str, state: &WorkspaceState) -> io::Result<()> {
+        let path = self.workspace_path(root);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(path, serde_json::to_string(state).map_err(io::Error::other)?)
+    }
+}
+
+pub fn project_settings_path(root: &Path) -> PathBuf {
+    root.join(PROJECT_DIR).join(PROJECT_SETTINGS_FILE)
+}
+
+/// The project's settings overrides; an unreadable file is reported, not fatal.
+pub struct ProjectSettingsFile {
+    pub settings: ProjectSettings,
+    pub path: PathBuf,
+    pub exists: bool,
+    pub error: Option<String>,
+}
+
+pub fn read_project_settings(root: &Path) -> ProjectSettingsFile {
+    let path = project_settings_path(root);
+    let f = read_json(&path);
+    ProjectSettingsFile {
+        settings: normalize_project_settings(&f.value()),
+        exists: !matches!(f, JsonFile::Missing),
+        error: f.error().map(str::to_owned),
+        path,
+    }
+}
+
+/// Files the app may read or create in `<project>/.forge` (nothing else).
+pub const PROJECT_FILES: [&str; 2] = ["run.json", "boxes.json"];
+
+fn project_file_path(root: &Path, name: &str) -> io::Result<PathBuf> {
+    if !PROJECT_FILES.contains(&name) {
+        return Err(io::Error::other(format!("Not a project file: {name}")));
+    }
+    Ok(root.join(PROJECT_DIR).join(name))
+}
+
+/// A project file's JSON (missing / unreadable are reported).
+pub fn read_project_file(root: &Path, name: &str) -> io::Result<(JsonFile, PathBuf)> {
+    let path = project_file_path(root, name)?;
+    Ok((read_json(&path), path))
+}
+
+pub fn ensure_project_file(root: &Path, name: &str, initial: &Value) -> io::Result<PathBuf> {
+    let path = project_file_path(root, name)?;
+    if matches!(read_json(&path), JsonFile::Missing) {
+        write_json(&path, initial)?;
+    }
+    Ok(path)
+}
+
+/// Replace a project file's JSON (only the allowed names).
+pub fn write_project_file(root: &Path, name: &str, value: &Value) -> io::Result<PathBuf> {
+    let path = project_file_path(root, name)?;
+    write_json(&path, value)?;
+    Ok(path)
+}
+
+/// Change some values in the project settings file, keeping everything else
+/// in it (`null` removes a key).
+pub fn update_project_settings(root: &Path, patch: &serde_json::Map<String, Value>) -> io::Result<()> {
+    let path = project_settings_path(root);
+    let f = read_json(&path);
+    if let Some(e) = f.error() {
+        return Err(io::Error::other(format!("{} can't be updated: {e}", path.display())));
+    }
+    let mut current = match f.value() {
+        Value::Object(m) => m,
+        _ => Default::default(),
+    };
+    for (k, v) in patch {
+        if v.is_null() {
+            current.remove(k);
+        } else {
+            current.insert(k.clone(), v.clone());
+        }
+    }
+    write_json(&path, &Value::Object(current))
+}
+
+/// Create the project settings file (with `initial` in it) if it doesn't exist yet.
+pub fn ensure_project_settings(root: &Path, initial: &ProjectSettings) -> io::Result<PathBuf> {
+    let path = project_settings_path(root);
+    if matches!(read_json(&path), JsonFile::Missing) {
+        write_json(&path, &serde_json::to_value(initial).map_err(io::Error::other)?)?;
+    }
+    Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn settings_round_trip_and_broken_files_give_defaults_with_an_error() {
+        let dir = tempfile::tempdir().expect("temp");
+        let us = UserState::new(dir.path());
+        assert_eq!(us.settings(), (Settings::default(), None));
+        let s = Settings { font_size: 18, ..Default::default() };
+        us.save_settings(&s).expect("save");
+        assert_eq!(us.settings().0, s);
+        std::fs::write(us.settings_path(), "{ nope").expect("write");
+        let (s2, err) = us.settings();
+        assert_eq!(s2, Settings::default());
+        assert!(err.is_some_and(|e| e.contains("valid JSON")));
+    }
+
+    #[test]
+    fn recent_folders_and_workspaces() {
+        let dir = tempfile::tempdir().expect("temp");
+        let us = UserState::new(dir.path());
+        us.add_recent("/a").expect("add");
+        us.add_recent("/b").expect("add");
+        assert_eq!(us.recent(), ["/b", "/a"]);
+        us.remove_recent("/b").expect("remove");
+        assert_eq!(us.recent(), ["/a"]);
+        assert!(us.workspace("/a").is_none());
+        let mut ws = WorkspaceState::default();
+        ws.task = "debug".into();
+        us.save_workspace("/a", &ws).expect("save");
+        assert_eq!(us.workspace("/a").map(|w| w.task), Some("debug".to_owned()));
+    }
+
+    #[test]
+    fn keybindings_are_written_like_the_old_app() {
+        let dir = tempfile::tempdir().expect("temp");
+        let us = UserState::new(dir.path());
+        let mut o = KeyOverrides::new();
+        o.insert("run.file".into(), vec!["Ctrl+R".into()]);
+        o.insert("nav.back".into(), vec![]);
+        us.save_keybindings(&o).expect("save");
+        assert_eq!(read_json(&us.keybindings_path()).value(), json!({ "nav.back": null, "run.file": "Ctrl+R" }));
+        assert_eq!(us.keybindings().0, o);
+    }
+
+    #[test]
+    fn project_files_only_the_allowed_names() {
+        let dir = tempfile::tempdir().expect("temp");
+        let root = dir.path();
+        assert!(read_project_file(root, "secrets.json").is_err());
+        let p = ensure_project_file(root, "run.json", &json!({ "configurations": [] })).expect("ensure");
+        assert!(p.ends_with(".forge/run.json") || p.ends_with(".forge\\run.json"));
+        write_project_file(root, "run.json", &json!({ "configurations": [1] })).expect("write");
+        assert_eq!(read_project_file(root, "run.json").expect("read").0.value(), json!({ "configurations": [1] }));
+    }
+
+    #[test]
+    fn updating_project_settings_keeps_other_values() {
+        let dir = tempfile::tempdir().expect("temp");
+        let root = dir.path();
+        write_json(&project_settings_path(root), &json!({ "tabSize": 2, "note": "mine" })).expect("write");
+        let mut patch = serde_json::Map::new();
+        patch.insert("pythonPath".into(), json!(".venv/bin/python"));
+        patch.insert("tabSize".into(), Value::Null);
+        update_project_settings(root, &patch).expect("update");
+        assert_eq!(read_json(&project_settings_path(root)).value(), json!({ "note": "mine", "pythonPath": ".venv/bin/python" }));
+        let ps = read_project_settings(root);
+        assert!(ps.exists);
+        assert_eq!(ps.settings.python_path.as_deref(), Some(".venv/bin/python"));
+    }
+}
