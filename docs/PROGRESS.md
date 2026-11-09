@@ -6,14 +6,14 @@ with the same text, and the old source and tests. This ledger is how work resume
 
 ## M1: Editor (Tier 1) (21)
 
-- [ ] T1-01 Open a folder, show the file tree, expand/collapse folders
-- [ ] T1-02 Create, rename and delete files and folders from the tree
+- [x] T1-01 Open a folder, show the file tree, expand/collapse folders
+- [x] T1-02 Create, rename and delete files and folders from the tree
 - [x] T1-03 Open a file and render its text with line numbers in a monospace font
 - [x] T1-04 Text buffer model: insert, delete, line/column ↔ offset
 - [x] T1-05 Cursor movement: arrows, Home/End, PgUp/PgDn, click to place
 - [x] T1-06 Typing, Backspace/Delete, Enter (with Python auto-indent after `:`)
 - [x] T1-07 Selection (shift+arrows, mouse drag, double/triple-click, Ctrl+A), copy/cut/paste, Tab/Shift+Tab indent
-- [ ] T1-08 Save (Ctrl+S), dirty marker, warning about unsaved changes on close
+- [x] T1-08 Save (Ctrl+S), dirty marker, warning about unsaved changes on close
 - [x] T1-09 Undo/redo
 - [x] T1-10 Scrolling that only renders visible lines (50k lines opens in ~80ms, v0.5)
 - [x] T1-11 Multi-cursor editing
@@ -22,25 +22,25 @@ with the same text, and the old source and tests. This ledger is how work resume
 - [x] T1-14 Comment/uncomment selection
 - [x] T1-15 Code folding (functions, classes and blocks)
 - [x] T1-16 Minimap
-- [ ] T1-17 Multiple editor groups / split view
-- [ ] T1-18 File encoding detection and conversion
-- [ ] T1-19 CRLF/LF line endings: shown in the status bar, click to convert
-- [ ] T1-20 Large-file mode and graceful handling of binary files
-- [ ] T1-21 Recovery of unsaved buffers after unexpected crashes
+- [x] T1-17 Multiple editor groups / split view
+- [x] T1-18 File encoding detection and conversion
+- [x] T1-19 CRLF/LF line endings: shown in the status bar, click to convert
+- [x] T1-20 Large-file mode and graceful handling of binary files
+- [x] T1-21 Recovery of unsaved buffers after unexpected crashes
 
 ## M2: IDE foundations (Tier 2) (19)
 
-- [ ] T2-01 Tabs for several open files
+- [x] T2-01 Tabs for several open files
 - [x] T2-02 Python syntax highlighting (own tokenizer, v0.5)
 - [ ] T2-03 Find/replace in the file (case, whole word, regex with $1 groups, v0.7)
 - [ ] T2-04 Run the current Python file and show its output in a panel (F5, auto-save, venv detection, `input()`, clickable tracebacks, v0.8)
 - [ ] T2-05 Integrated terminal (xterm.js + node-pty, Ctrl+`, v0.9)
-- [ ] T2-06 Command palette (Ctrl+Shift+P), quick open (Ctrl+P), go to line (Ctrl+G)
+- [x] T2-06 Command palette (Ctrl+Shift+P), quick open (Ctrl+P), go to line (Ctrl+G)
 - [ ] T2-07 Settings (font size, theme, tab width, Python interpreter, Ctrl+= / Ctrl+-)
 - [ ] T2-08 Multiple terminal sessions
 - [ ] T2-09 Terminal profiles and shell selection
-- [ ] T2-10 Configurable keyboard shortcuts
-- [ ] T2-11 Recent projects
+- [x] T2-10 Configurable keyboard shortcuts
+- [x] T2-11 Recent projects
 - [ ] T2-12 Workspace persistence (restore tabs, terminal sessions and layout)
 - [ ] T2-13 Project-specific settings
 - [ ] T2-14 Task runner for predefined project commands
@@ -186,3 +186,4 @@ with the same text, and the old source and tests. This ledger is how work resume
 
 - 2026-11-08: ledger created from the old checklist (163 items).
 - 2026-11-09: editor view (GPUI) on forge-text: T1-03, T1-04, T1-05, T1-06, T1-07, T1-09, T1-10, T1-11, T1-12, T1-13, T1-14, T1-15, T1-16, T2-02. 159 model tests + 13 headless view tests. Empty window 75 MB (debug).
+- 2026-11-09: workspace shell: dock with the four tasks (layouts.json), tabs and split groups, file tree (create/rename/delete), palette (commands, files, line, choices, shortcut capture), Keyboard Shortcuts, Welcome page, status bar, save/close warnings, encodings, line endings, large/binary files, crash backups, workspace state. T1-01, T1-02, T1-08, T1-17..T1-21, T2-01, T2-06, T2-10, T2-11. Window with a project 77 MB (debug).

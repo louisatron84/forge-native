@@ -307,6 +307,24 @@ impl EditorView {
         self.doc_id().and_then(|id| self.views.get(&id)).cloned().unwrap_or_default()
     }
 
+    /// This editor's cursor and scroll position in a document (if it has shown it).
+    pub fn view_of(&self, document: &Entity<Document>) -> Option<ViewState> {
+        self.views.get(&document.entity_id()).cloned()
+    }
+
+    /// Put the cursor and scroll position back (a project's tabs reopening).
+    pub fn restore_view(&mut self, cursor: Pos, scroll_top: f32, cx: &mut Context<Self>) {
+        let Some(d) = &self.document else { return };
+        let p = d.read(cx).doc.buffer.clamp(cursor);
+        if let Some(v) = self.view_mut() {
+            v.cursor = p;
+            v.anchor = p;
+            v.extras.clear();
+            v.scroll_top = scroll_top.max(0.0);
+        }
+        cx.notify();
+    }
+
     pub(crate) fn view_mut(&mut self) -> Option<&mut ViewState> {
         let id = self.doc_id()?;
         self.views.get_mut(&id)

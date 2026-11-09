@@ -2,7 +2,7 @@
 //! showing it (both sides of a split). Edits are announced with
 //! `DocumentEvent::Edited`, so other views move their cursors along.
 
-use forge_text::{Change, Doc};
+use forge_text::{Change, Doc, Encoding};
 use gpui_kit::{Context, EntityId, EventEmitter};
 
 pub struct Document {
@@ -23,6 +23,11 @@ impl EventEmitter<DocumentEvent> for Document {}
 impl Document {
     pub fn new(path: impl Into<String>, text: &str) -> Self {
         Self { doc: Doc::new(path, text) }
+    }
+
+    /// A file read from disk in `encoding`; `large` files skip the language server.
+    pub fn with_options(path: impl Into<String>, text: &str, encoding: Encoding, large: bool) -> Self {
+        Self { doc: Doc::with_options(path, text, encoding, large) }
     }
 
     /// Run `edit` on the document, then tell everyone what changed.
