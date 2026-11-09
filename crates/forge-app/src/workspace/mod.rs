@@ -15,14 +15,17 @@ use crate::find_bar::{FindBar, FindOption};
 use crate::palette::{Choice, CommandItem, Palette, PaletteEvent};
 use crate::panels::files::{FileTree, FileTreeEvent};
 use crate::panels::{self, Placeholder};
+use crate::settings_view::{project_note, SettingsEvent, SettingsView};
 use forge_core::commands::key_string;
 use forge_core::dock::{normalize_layouts, Tasks, Zone};
 use forge_core::project_state::{DocState, GroupState, WorkspaceState};
+use forge_core::settings::{effective_settings, ProjectSettings, Settings, PROJECT_SETTING_KEYS};
 use forge_core::tabs::{is_inside, renamed_path, same_path, DocId, Tabs};
 use forge_sys::backups::{BackupAction, BackupData, BackupKeeper, Backups, DocSnapshot};
 use forge_sys::files::{list_files, trash_entry};
 use forge_sys::project_dir::{prepare_project_dir, ProjectDirResult};
 use forge_sys::text_file::{read_text_file, write_text_file, TextFile};
+use forge_sys::user_state::read_project_settings;
 use forge_text::{EditKind, Eol, Pos};
 use gpui_kit::{
     div, prelude::FluentBuilder, px, AnyView, App, AppContext, Context, Entity, FocusHandle, Focusable,
@@ -56,6 +59,10 @@ pub struct Workspace {
     pub(crate) file_tree: Entity<FileTree>,
     pub(crate) palette: Entity<Palette>,
     pub(crate) find_bar: Entity<FindBar>,
+    pub(crate) settings_view: Entity<SettingsView>,
+    /// The open project's overrides (`.forge/settings.json`).
+    pub(crate) project_settings: ProjectSettings,
+    project_settings_path: Option<PathBuf>,
     /// A short message in the status bar.
     pub(crate) note: Option<SharedString>,
     note_task: Option<Task<()>>,
@@ -106,6 +113,7 @@ impl Workspace {
         let file_tree = cx.new(FileTree::new);
         let palette = cx.new(|cx| Palette::new(window, cx));
         let find_bar = cx.new(|cx| FindBar::new(window, cx));
+        let settings_view = cx.new(|cx| SettingsView::new(window, cx));
         let mut subs = Vec::new();
         for (i, ed) in editors.iter().enumerate() {
             subs.push(cx.subscribe_in(ed, window, move |this, _, event: &EditorEvent, window, cx| {
@@ -113,6 +121,11 @@ impl Workspace {
             }));
         }
         subs.push(cx.subscribe_in(&file_tree, window, Self::on_tree_event));
+        subs.push(cx.subscribe_in(&settings_view, window, |this, _, event: &SettingsEvent, window, cx| match event {
+            SettingsEvent::Changed => this.apply_settings(cx),
+            SettingsEvent::Command(id) => this.run_command(id, window, cx),
+            SettingsEvent::Closed => this.focus_editor(window, cx),
+        }));
         subs.push(cx.subscribe_in(&palette, window, |this, _, event: &PaletteEvent, window, cx| match event {
             PaletteEvent::Run(action) => action(this, window, cx),
             PaletteEvent::Closed => cx.notify(),
@@ -151,6 +164,9 @@ impl Workspace {
             file_tree,
             palette,
             find_bar,
+            settings_view,
+            project_settings: ProjectSettings::default(),
+            project_settings_path: None,
             note: None,
             note_task: None,
             drop_target: None,
@@ -196,9 +212,55 @@ impl Workspace {
 
     // ---------- settings ----------
 
+    /// The settings in effect: yours, with the open project's overrides on top.
+    pub fn effective_settings(&self, cx: &App) -> Settings {
+        let mut project = self.project_settings.clone();
+        if let (Some(p), Some(root)) = (&project.python_path, &self.root) {
+            project.python_path = Some(resolve_in_project(p, root));
+        }
+        effective_settings(app_state::settings(cx), &project)
+    }
+
+    /// Read `<project>/.forge/settings.json` (a missing file means no overrides).
+    fn load_project_settings(&mut self, folder: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        let f = read_project_settings(folder);
+        if let Some(err) = &f.error {
+            self.alert(
+                format!(
+                    "This project's settings file couldn't be read, so it's ignored for now:\n{}\n\n{err}",
+                    f.path.display()
+                ),
+                window,
+                cx,
+            );
+        }
+        self.project_settings = f.settings;
+        self.project_settings_path = Some(f.path);
+        self.apply_settings(cx);
+    }
+
     /// Apply the settings to the editors (font size, tab size...).
     pub fn apply_settings(&mut self, cx: &mut Context<Self>) {
-        let s = app_state::settings(cx).clone();
+        let s = self.effective_settings(cx);
+        let set_keys: Vec<&str> = {
+            let v = serde_json::to_value(&self.project_settings).unwrap_or_default();
+            PROJECT_SETTING_KEYS.iter().copied().filter(|k| v.get(*k).is_some_and(|x| !x.is_null())).collect()
+        };
+        let note = project_note(&set_keys, self.root.is_some());
+        let user_shell = app_state::settings(cx).shell.clone();
+        let shell_name = if user_shell.is_empty() {
+            "System default".to_owned()
+        } else {
+            forge_term::shells::installed_shells()
+                .into_iter()
+                .find(|p| p.id == user_shell)
+                .map_or(user_shell, |p| p.name)
+        };
+        self.settings_view.update(cx, |v, cx| {
+            v.project_note = note;
+            v.shell_name = shell_name;
+            cx.notify();
+        });
         for ed in &self.editors {
             ed.update(cx, |e, cx| {
                 e.font_size = s.font_size as f32;
@@ -225,6 +287,20 @@ impl Workspace {
             }
         }
         if key.is_empty() {
+            return;
+        }
+        // The Settings dialog handles its own keys; Escape closes it, Ctrl+, toggles it.
+        if self.settings_view.read(cx).is_open() {
+            if key == "Escape" {
+                self.settings_view.update(cx, |v, cx| v.close(cx));
+                cx.stop_propagation();
+                return;
+            }
+            let keymap = app_state::state(cx).keymap.clone();
+            if keymap.command_for_key(&key, |id| id == "settings.open").is_some() {
+                cx.stop_propagation();
+                self.run_command("settings.open", window, cx);
+            }
             return;
         }
         // Alt+C / Alt+W / Alt+R toggle the find options while typing in the find bar.
@@ -407,6 +483,7 @@ impl Workspace {
         }
         let _ = app_state::state(cx).user.add_recent(&path_str);
         self.root = Some(folder.clone());
+        self.load_project_settings(&folder, window, cx);
         self.file_tree.update(cx, |t, cx| t.set_root(Some(folder.clone()), cx));
         self.refresh_recent(cx);
         self.restore_layout(&path_str, window, cx);
@@ -721,7 +798,12 @@ impl Workspace {
     }
 
     /// A file was saved: reload what it configures.
-    fn after_save(&mut self, path: &str, _window: &mut Window, cx: &mut Context<Self>) {
+    fn after_save(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if let (Some(p), Some(root)) = (self.project_settings_path.clone(), self.root.clone()) {
+            if same_path(path, &p.to_string_lossy()) {
+                self.load_project_settings(&root, window, cx);
+            }
+        }
         let st = app_state::state(cx);
         if same_path(path, &st.user.keybindings_path().to_string_lossy()) {
             let (overrides, err) = st.user.keybindings();
@@ -1084,6 +1166,17 @@ impl Workspace {
     }
 }
 
+/// A project's relative path ("venv/bin/python") made absolute inside the project.
+fn resolve_in_project(path: &str, root: &Path) -> String {
+    let b = path.as_bytes();
+    let absolute = (b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':') || path.starts_with(['/', '\\', '~']);
+    if path.is_empty() || absolute || !path.contains(['/', '\\']) {
+        return path.to_owned();
+    }
+    let rest = path.trim_start_matches("./").trim_start_matches(".\\");
+    root.join(rest).to_string_lossy().into_owned()
+}
+
 /// `canonicalize` on Windows gives `\\?\C:\...`: use the plain form.
 fn strip_verbatim(p: PathBuf) -> PathBuf {
     let s = p.to_string_lossy();
@@ -1118,6 +1211,7 @@ impl Render for Workspace {
             .when(self.editing_layout, |d| d.child(self.render_edit_bar(cx)))
             .child(div().flex_1().min_h_0().flex().child(dock))
             .child(self.render_status_bar(window, cx))
+            .child(self.settings_view.clone())
             .child(self.palette.clone())
     }
 }

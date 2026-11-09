@@ -1882,6 +1882,7 @@ version = "1.0.0-dev"
 dependencies = [
  "forge-core",
  "forge-sys",
+ "forge-term",
  "forge-text",
  "gpui-kit",
  "gpui-pre",

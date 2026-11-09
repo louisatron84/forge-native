@@ -1,3 +1,4 @@
-//! forge-term: see docs/PLAN.md.
+//! forge-term: Forge's integrated terminals: the installed shells, and (as
+//! the port goes on) the pseudo-terminal processes and the screen model.
 
-pub fn placeholder() {}
+pub mod shells;

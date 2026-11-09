@@ -330,12 +330,29 @@ impl Workspace {
                 cx.notify();
             }
             "settings.open" => {
-                let st = app_state::state(cx);
-                let path = st.user.settings_path();
-                if !path.exists() {
-                    let _ = st.user.save_settings(&st.settings.clone());
+                if self.settings_view.read(cx).is_open() {
+                    self.settings_view.update(cx, |v, cx| v.close(cx));
+                } else {
+                    self.settings_view.update(cx, |v, cx| v.open(window, cx));
                 }
-                self.open_path(path, window, cx);
+            }
+            "settings.pickShell" => {
+                let current = app_state::settings(cx).shell.clone();
+                let mut choices = vec![Choice::new("System default", |ws, _, cx| {
+                    let _ = app_state::update_settings(cx, |s| s.shell = String::new());
+                    ws.apply_settings(cx);
+                })];
+                for p in forge_term::shells::installed_shells() {
+                    let id = p.id.clone();
+                    let c = Choice::new(p.name.clone(), move |ws, _, cx| {
+                        let id = id.clone();
+                        let _ = app_state::update_settings(cx, |s| s.shell = id);
+                        ws.apply_settings(cx);
+                    })
+                    .detail(p.file.clone());
+                    choices.push(if p.id == current { c.hint("current") } else { c });
+                }
+                self.choose("Shell for new terminals", choices, window, cx);
             }
             "settings.project" => {
                 if let Some(root) = self.root.clone() {

@@ -9,6 +9,7 @@ mod editor;
 mod find_bar;
 mod palette;
 mod panels;
+mod settings_view;
 mod theme;
 mod workspace;
 

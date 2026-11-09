@@ -36,13 +36,13 @@ with the same text, and the old source and tests. This ledger is how work resume
 - [ ] T2-04 Run the current Python file and show its output in a panel (F5, auto-save, venv detection, `input()`, clickable tracebacks, v0.8)
 - [ ] T2-05 Integrated terminal (xterm.js + node-pty, Ctrl+`, v0.9)
 - [x] T2-06 Command palette (Ctrl+Shift+P), quick open (Ctrl+P), go to line (Ctrl+G)
-- [ ] T2-07 Settings (font size, theme, tab width, Python interpreter, Ctrl+= / Ctrl+-)
+- [x] T2-07 Settings (font size, theme, tab width, Python interpreter, Ctrl+= / Ctrl+-)
 - [ ] T2-08 Multiple terminal sessions
 - [ ] T2-09 Terminal profiles and shell selection
 - [x] T2-10 Configurable keyboard shortcuts
 - [x] T2-11 Recent projects
 - [ ] T2-12 Workspace persistence (restore tabs, terminal sessions and layout)
-- [ ] T2-13 Project-specific settings
+- [x] T2-13 Project-specific settings
 - [ ] T2-14 Task runner for predefined project commands
 - [ ] T2-15 Run configurations (arguments, environment variables and working directory)
 - [ ] T2-16 Python environment management (create, select and manage virtual environments)
