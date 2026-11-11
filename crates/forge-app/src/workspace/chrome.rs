@@ -1,0 +1,343 @@
+//! The top bar (wordmark, task switcher, project, Run) and the status bar
+//! (cursor, indentation, encoding, line endings, language, messages).
+
+use super::Workspace;
+use crate::app_state;
+use crate::theme::ForgeTheme;
+use forge_core::dock::TASKS;
+use gpui_kit::{
+    div, prelude::FluentBuilder, Context, FontWeight, InteractiveElement, IntoElement, ParentElement, SharedString,
+    StatefulInteractiveElement, Styled, Window,
+};
+
+pub(super) struct SuggestionFile {
+    entity: gpui_kit::EntityId,
+    version: u64,
+    path: String,
+    hints: forge_core::suggest::FileHints,
+}
+
+fn task_name(task: &str) -> &'static str {
+    match task {
+        "connect" => "Connect",
+        "debug" => "Debug",
+        "run" => "Run",
+        _ => "Code",
+    }
+}
+
+fn task_tip(task: &str) -> &'static str {
+    match task {
+        "connect" => "Connect: the project graph (Ctrl+Alt+2)",
+        "debug" => "Debug (Ctrl+Alt+3)",
+        "run" => "Run: output and tests (Ctrl+Alt+4)",
+        _ => "Code (Ctrl+Alt+1)",
+    }
+}
+
+impl Workspace {
+    fn context_tools(&mut self, cx: &Context<Self>) -> Vec<forge_core::suggest::Suggestion> {
+        use forge_core::suggest::{suggest_tools, DebugStatus, FileHints, WorkContext};
+        let mut problems = 0;
+        let file = self.active_doc().and_then(|entity| {
+            let doc = &entity.read(cx).doc;
+            let extension = std::path::Path::new(doc.path()).extension()?.to_str()?;
+            if doc.large || !(extension.eq_ignore_ascii_case("py") || extension.eq_ignore_ascii_case("pyw")) {
+                return None;
+            }
+            problems = self.editors[self.tabs.active_group.min(1)]
+                .read(cx)
+                .diagnostics
+                .iter()
+                .filter(|d| d.severity <= 2)
+                .count();
+            let changed = self.suggestion_file.as_ref().is_none_or(|cache| {
+                cache.entity != entity.entity_id() || cache.version != doc.version || cache.path != doc.path()
+            });
+            if changed {
+                self.suggestion_file = Some(SuggestionFile {
+                    entity: entity.entity_id(),
+                    version: doc.version,
+                    path: doc.path().into(),
+                    hints: FileHints::scan(doc.path(), &doc.text()),
+                });
+            }
+            self.suggestion_file.as_ref().map(|cache| cache.hints)
+        });
+        let changes = self.git_panel.read(cx).change_count();
+        suggest_tools(
+            &WorkContext {
+                task: self.tasks.current(),
+                file,
+                problems,
+                changes,
+                debug: if self.debug.stopped.is_some() {
+                    DebugStatus::Paused
+                } else if self.debug.running {
+                    DebugStatus::Running
+                } else {
+                    DebugStatus::Idle
+                },
+                last_run_failed: self.run.last_failed,
+            },
+            |panel| self.panel_is_shown(panel),
+            3,
+        )
+    }
+
+    pub(super) fn render_toolbar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.global::<ForgeTheme>().0.clone();
+        let suggestions = self.context_tools(cx).into_iter().map(|s| {
+            let selector = format!("suggest-{}", s.id);
+            div()
+                .id(SharedString::from(selector.clone()))
+                .debug_selector(move || selector.clone())
+                .px(t.px(7.0))
+                .py(t.px(3.0))
+                .text_size(t.px(11.0))
+                .text_color(t.fg_muted)
+                .whitespace_nowrap()
+                .cursor_pointer()
+                .hover(|d| d.bg(t.bg_hover).text_color(t.heat_2))
+                .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(s.why.clone()).build(window, cx))
+                .on_click(cx.listener(move |ws, _, window, cx| {
+                    if let Some(panel) = s.panel {
+                        ws.reveal_panel(panel, cx);
+                    } else if let Some(command) = s.command {
+                        ws.run_command(command, window, cx);
+                    }
+                }))
+                .child(s.label)
+        });
+        let current = self.tasks.current();
+        let tasks = TASKS.iter().map(|task| {
+            let on = *task == current;
+            let task: &'static str = task;
+            div()
+                .id(SharedString::from(format!("task-{task}")))
+                .px(t.px(12.0))
+                .py(t.px(3.0))
+                .border_1()
+                .rounded(t.px(2.0))
+                .font_weight(FontWeight::MEDIUM)
+                .cursor_pointer()
+                .when(on, |d| d.text_color(t.heat_2).border_color(t.heat_2).border_b_2())
+                .when(!on, |d| {
+                    d.text_color(t.fg_muted).border_color(t.border).hover(|s| s.text_color(t.fg).bg(t.bg_hover))
+                })
+                .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(task_tip(task)).build(window, cx))
+                .on_click(cx.listener(move |this, _, window, cx| this.run_command(&format!("task.{task}"), window, cx)))
+                .child(task_name(task))
+        });
+        let folder = self.root.as_ref().map(|r| r.to_string_lossy().into_owned());
+        let busy = self.is_running(cx);
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(t.px(12.0))
+            .px(t.px(10.0))
+            .py(t.px(6.0))
+            .bg(t.bg_panel)
+            .border_b_1()
+            .border_color(t.border)
+            .child(
+                div()
+                    .text_size(t.px(15.0))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(t.heat_2)
+                    .mr(t.px(6.0))
+                    .child("Forge"),
+            )
+            .child(div().flex().gap(t.px(4.0)).ml(t.px(6.0)).children(tasks))
+            .child(div().flex().min_w_0().overflow_hidden().children(suggestions))
+            .child(div().flex_1())
+            .child(
+                div()
+                    .max_w(gpui_kit::relative(0.4))
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .text_size(t.px(12.0))
+                    .text_color(if folder.is_some() { t.fg } else { t.fg_muted })
+                    .child(folder.unwrap_or_else(|| "No folder open".into())),
+            )
+            .child(
+                div()
+                    .id("run-button")
+                    .px(t.px(14.0))
+                    .py(t.px(5.0))
+                    .bg(t.heat_3)
+                    .text_color(t.on_heat)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.heat_2))
+                    .tooltip(|window, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new("Run (F5 / Ctrl+F5)").build(window, cx)
+                    })
+                    .when(busy, |d| d.bg(t.err))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.run_command(if busy { "run.stop" } else { "run.smart" }, window, cx)
+                    }))
+                    .child(if busy { "■ Stop" } else { "▶ Run" }),
+            )
+    }
+
+    pub(super) fn render_status_bar(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.global::<ForgeTheme>().0.clone();
+        let mut right: Vec<(&'static str, String, Option<&'static str>)> = Vec::new();
+        if let Some(doc) = self.active_doc() {
+            let ed = self.editors[self.tabs.active_group.min(1)].read(cx);
+            let c = ed.cursor();
+            let cursors = ed.cursor_count();
+            let selected = ed.selected_text(cx).chars().count();
+            let d = &doc.read(cx).doc;
+            let extra = if cursors > 1 {
+                format!(" ({cursors} cursors)")
+            } else if selected > 0 {
+                format!(" ({selected} selected)")
+            } else {
+                String::new()
+            };
+            let lang = d.mode().language;
+            let tab_size = app_state::settings(cx).tab_size;
+            right.push(("sb-cursor", format!("Ln {}, Col {}{extra}", c.line + 1, c.col + 1), Some("palette.line")));
+            right.push(("sb-indent", format!("Spaces: {tab_size}"), Some("settings.open")));
+            right.push(("sb-encoding", d.encoding.label().to_owned(), Some("file.saveEncoding")));
+            right.push(("sb-eol", d.eol().label().to_owned(), Some("file.lineEndings")));
+            let lang_text = if d.large && lang.server.is_some() {
+                format!("{} (large file: no error checking)", lang.name)
+            } else {
+                lang.name.to_owned()
+            };
+            right.push(("sb-lang", lang_text, None));
+        }
+        let item = |id: &'static str, text: String, command: Option<&'static str>, cx: &mut Context<Self>| {
+            div()
+                .id(id)
+                .px(t.px(7.0))
+                .py(t.px(2.0))
+                .rounded(t.px(2.0))
+                .whitespace_nowrap()
+                .when_some(command, |d, command| {
+                    d.cursor_pointer()
+                        .hover(|s| s.bg(t.bg_hover).text_color(t.fg))
+                        .on_click(cx.listener(move |this, _, window, cx| this.run_command(command, window, cx)))
+                })
+                .child(text)
+        };
+        let items: Vec<_> = right.into_iter().map(|(id, text, command)| item(id, text, command, cx)).collect();
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(t.px(2.0))
+            .min_h(t.px(24.0))
+            .px(t.px(8.0))
+            .bg(t.bg_panel)
+            .border_t_1()
+            .border_color(t.border)
+            .text_color(t.fg_muted)
+            .text_size(t.px(12.0))
+            .when(
+                matches!(
+                    app_state::state(cx).updater.state(),
+                    forge_update::State::Available(_) | forge_update::State::Ready(_)
+                ),
+                |d| {
+                    let ready = matches!(app_state::state(cx).updater.state(), forge_update::State::Ready(_));
+                    d.child(
+                        div()
+                            .id("sb-update")
+                            .px(t.px(7.0))
+                            .text_color(t.accent)
+                            .cursor_pointer()
+                            .child(if ready { "Update ready — Restart now" } else { "Update available" })
+                            .on_click(cx.listener(|this, _, window, cx| this.check_updates(false, window, cx))),
+                    )
+                },
+            )
+            .when(self.root.is_some(), |d| {
+                let (errors, warnings) = self.lsp.counts;
+                d.child(
+                    div()
+                        .id("sb-problems")
+                        .flex()
+                        .gap(t.px(6.0))
+                        .px(t.px(7.0))
+                        .py(t.px(2.0))
+                        .rounded(t.px(2.0))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.bg_hover))
+                        .on_click(cx.listener(|this, _, window, cx| this.run_command("panel.problems", window, cx)))
+                        .child(div().when(errors > 0, |d| d.text_color(t.err)).child(format!("⊗ {errors}")))
+                        .child(div().when(warnings > 0, |d| d.text_color(t.warn)).child(format!("⚠ {warnings}"))),
+                )
+            })
+            .when(self.lsp.status == super::lsp::LspStatus::Missing && self.root.is_some(), |d| {
+                d.child(
+                    div()
+                        .id("sb-lsp-install")
+                        .px(t.px(7.0))
+                        .py(t.px(2.0))
+                        .rounded(t.px(2.0))
+                        .text_color(t.warn)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.bg_hover))
+                        .on_click(cx.listener(|this, _, window, cx| this.install_language_server(window, cx)))
+                        .child("Python language server: Install"),
+                )
+            })
+            .when_some(self.missing_status(), |d, text| {
+                d.child(
+                    div()
+                        .id("sb-deps")
+                        .px(t.px(7.0))
+                        .py(t.px(2.0))
+                        .rounded(t.px(2.0))
+                        .whitespace_nowrap()
+                        .text_color(t.warn)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.bg_hover))
+                        .on_click(cx.listener(|this, _, window, cx| this.show_missing(window, cx)))
+                        .child(text),
+                )
+            })
+            .when_some(self.python_status(), |d, text| {
+                d.child(
+                    div()
+                        .id("sb-python")
+                        .px(t.px(7.0))
+                        .py(t.px(2.0))
+                        .rounded(t.px(2.0))
+                        .whitespace_nowrap()
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.bg_hover).text_color(t.fg))
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.run_command("python.selectInterpreter", window, cx)),
+                        )
+                        .child(text),
+                )
+            })
+            .when(self.root.is_some(), |d| {
+                let label = format!("▶ {}", self.run.config.clone().unwrap_or_else(|| "Current file".into()));
+                d.child(
+                    div()
+                        .id("sb-run")
+                        .px(t.px(7.0))
+                        .py(t.px(2.0))
+                        .rounded(t.px(2.0))
+                        .whitespace_nowrap()
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.bg_hover).text_color(t.fg))
+                        .on_click(cx.listener(|this, _, window, cx| this.run_command("run.selectConfig", window, cx)))
+                        .child(label),
+                )
+            })
+            .child(div().flex_1())
+            .when_some(self.note.clone(), |d, note| {
+                d.child(div().px(t.px(7.0)).min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().child(note))
+            })
+            .children(items)
+    }
+}

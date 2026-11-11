@@ -1,0 +1,16 @@
+[package]
+name = "forge-dap"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+forge-lsp = { path = "../forge-lsp" }
+forge-core = { path = "../forge-core" }
+forge-text = { path = "../forge-text" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

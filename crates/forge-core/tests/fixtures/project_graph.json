@@ -1,0 +1,353 @@
+{
+  "scan": {
+    "root": "/p",
+    "python": "3.12",
+    "truncated": false,
+    "files": [
+      {
+        "path": "pkg/__init__.py",
+        "module": "pkg",
+        "isPackage": true,
+        "imports": [],
+        "routes": [],
+        "http": [],
+        "env": [],
+        "lines": 1,
+        "defs": [
+          {
+            "name": "<module>",
+            "qual": "<module>",
+            "kind": "module",
+            "line": 1,
+            "endLine": 10,
+            "calls": [],
+            "refs": [],
+            "decorators": []
+          }
+        ]
+      },
+      {
+        "path": "pkg/a.py",
+        "module": "pkg.a",
+        "isPackage": false,
+        "imports": [
+          {
+            "module": "pkg.b",
+            "names": [
+              "run"
+            ],
+            "alias": null,
+            "level": 0,
+            "line": 1
+          },
+          {
+            "module": "requests",
+            "names": [],
+            "alias": null,
+            "level": 0,
+            "line": 2
+          }
+        ],
+        "routes": [],
+        "http": [
+          {
+            "library": "requests",
+            "method": "GET",
+            "url": "https://api.x.com/v1",
+            "line": 4,
+            "func": "start"
+          }
+        ],
+        "env": [],
+        "lines": 10,
+        "defs": [
+          {
+            "name": "<module>",
+            "qual": "<module>",
+            "kind": "module",
+            "line": 1,
+            "endLine": 10,
+            "calls": [],
+            "refs": [],
+            "decorators": []
+          },
+          {
+            "name": "start",
+            "qual": "start",
+            "kind": "function",
+            "line": 3,
+            "endLine": 5,
+            "calls": [
+              {
+                "name": "run",
+                "line": 4
+              },
+              {
+                "name": "helper",
+                "line": 4
+              }
+            ],
+            "refs": [
+              "run",
+              "helper"
+            ],
+            "decorators": []
+          },
+          {
+            "name": "helper",
+            "qual": "helper",
+            "kind": "function",
+            "line": 3,
+            "endLine": 5,
+            "calls": [],
+            "refs": [],
+            "decorators": []
+          }
+        ],
+        "main": true
+      },
+      {
+        "path": "pkg/b.py",
+        "module": "pkg.b",
+        "isPackage": false,
+        "imports": [],
+        "routes": [],
+        "http": [],
+        "env": [],
+        "lines": 10,
+        "defs": [
+          {
+            "name": "<module>",
+            "qual": "<module>",
+            "kind": "module",
+            "line": 1,
+            "endLine": 10,
+            "calls": [],
+            "refs": [],
+            "decorators": []
+          },
+          {
+            "name": "run",
+            "qual": "run",
+            "kind": "function",
+            "line": 3,
+            "endLine": 5,
+            "calls": [],
+            "refs": [],
+            "decorators": []
+          }
+        ]
+      },
+      {
+        "path": "tests/test_a.py",
+        "module": "tests.test_a",
+        "isPackage": false,
+        "imports": [
+          {
+            "module": "pkg.a",
+            "names": [
+              "start"
+            ],
+            "alias": null,
+            "level": 0,
+            "line": 1
+          }
+        ],
+        "routes": [],
+        "http": [],
+        "env": [],
+        "lines": 10,
+        "defs": [
+          {
+            "name": "<module>",
+            "qual": "<module>",
+            "kind": "module",
+            "line": 1,
+            "endLine": 10,
+            "calls": [],
+            "refs": [],
+            "decorators": []
+          },
+          {
+            "name": "test_start",
+            "qual": "test_start",
+            "kind": "function",
+            "line": 3,
+            "endLine": 5,
+            "calls": [
+              {
+                "name": "start",
+                "line": 4
+              }
+            ],
+            "refs": [
+              "start"
+            ],
+            "decorators": []
+          }
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "modules": [
+      {
+        "id": "pkg",
+        "path": "pkg/__init__.py",
+        "isPackage": true,
+        "isTest": false,
+        "isEntry": false,
+        "lines": 1,
+        "symbols": [],
+        "routes": [],
+        "http": [],
+        "env": []
+      },
+      {
+        "id": "pkg.a",
+        "path": "pkg/a.py",
+        "isPackage": false,
+        "isTest": false,
+        "isEntry": true,
+        "lines": 10,
+        "symbols": [
+          {
+            "id": "pkg.a:start",
+            "module": "pkg.a",
+            "qual": "start",
+            "name": "start",
+            "kind": "function",
+            "line": 3,
+            "endLine": 5,
+            "decorators": []
+          },
+          {
+            "id": "pkg.a:helper",
+            "module": "pkg.a",
+            "qual": "helper",
+            "name": "helper",
+            "kind": "function",
+            "line": 3,
+            "endLine": 5,
+            "decorators": []
+          }
+        ],
+        "routes": [],
+        "http": [
+          {
+            "library": "requests",
+            "method": "GET",
+            "url": "https://api.x.com/v1",
+            "line": 4,
+            "func": "start"
+          }
+        ],
+        "env": []
+      },
+      {
+        "id": "pkg.b",
+        "path": "pkg/b.py",
+        "isPackage": false,
+        "isTest": false,
+        "isEntry": false,
+        "lines": 10,
+        "symbols": [
+          {
+            "id": "pkg.b:run",
+            "module": "pkg.b",
+            "qual": "run",
+            "name": "run",
+            "kind": "function",
+            "line": 3,
+            "endLine": 5,
+            "decorators": []
+          }
+        ],
+        "routes": [],
+        "http": [],
+        "env": []
+      },
+      {
+        "id": "tests.test_a",
+        "path": "tests/test_a.py",
+        "isPackage": false,
+        "isTest": true,
+        "isEntry": false,
+        "lines": 10,
+        "symbols": [
+          {
+            "id": "tests.test_a:test_start",
+            "module": "tests.test_a",
+            "qual": "test_start",
+            "name": "test_start",
+            "kind": "function",
+            "line": 3,
+            "endLine": 5,
+            "decorators": []
+          }
+        ],
+        "routes": [],
+        "http": [],
+        "env": []
+      }
+    ],
+    "imports": [
+      {
+        "from": "pkg.a",
+        "to": "pkg.b",
+        "line": 1,
+        "cyclic": false
+      },
+      {
+        "from": "tests.test_a",
+        "to": "pkg.a",
+        "line": 1,
+        "cyclic": false
+      }
+    ],
+    "externals": [
+      {
+        "name": "requests",
+        "importedBy": [
+          "pkg.a"
+        ]
+      }
+    ],
+    "calls": [
+      {
+        "from": "pkg.a:start",
+        "to": "pkg.b:run",
+        "line": 4
+      },
+      {
+        "from": "pkg.a:start",
+        "to": "pkg.a:helper",
+        "line": 4
+      },
+      {
+        "from": "tests.test_a:test_start",
+        "to": "pkg.a:start",
+        "line": 4
+      }
+    ],
+    "cycles": [],
+    "unused": [],
+    "unreachable": [],
+    "routes": [],
+    "http": [
+      {
+        "library": "requests",
+        "method": "GET",
+        "url": "https://api.x.com/v1",
+        "line": 4,
+        "func": "start",
+        "module": "pkg.a",
+        "host": "api.x.com"
+      }
+    ],
+    "events": [],
+    "env": [],
+    "errors": [],
+    "truncated": false
+  }
+}
