@@ -1,0 +1,12 @@
+{
+  "app/__init__.py": "",
+  "app/main.py": "import os\nfrom app.service import fetch_user\nfrom .api import routes\nKEY = os.environ[\"API_KEY\"]\ndef main():\n    print(fetch_user(1))\nif __name__ == \"__main__\":\n    main()",
+  "app/service.py": "import requests\nimport os\nfrom app import util\nBASE = os.getenv(\"BASE_URL\", \"https://api.example.com\")\nclass Client:\n    def get(self, id):\n        return self._call(id)\n    def _call(self, id):\n        return requests.get(f\"https://api.github.com/users/{id}\").json()\ndef fetch_user(id):\n    return Client().get(id)\ndef never_used():\n    util.helper()\ndef recursive(n):\n    return recursive(n - 1) if n else 0",
+  "app/util.py": "from app import service\ndef helper():\n    return service.BASE",
+  "app/api/__init__.py": "",
+  "app/api/routes.py": "from fastapi import APIRouter\nimport httpx\nrouter = APIRouter()\n@router.get(\"/users/{id}\")\nasync def read_user(id: int):\n    async with httpx.AsyncClient() as c:\n        await c.get(\"https://example.org/x\")\n    return httpx.post(\"https://hooks.slack.com/x\")",
+  "app/broken.py": "def oops(:\n",
+  "tests/test_service.py": "from app.service import fetch_user\ndef test_it():\n    assert fetch_user(1)\n",
+  "tests/test_dead.py": "def early(x):\n    return x\n    print(\"never\")\ndef loop():\n    for i in range(3):\n        continue\n        i += 1\ndef both(x):\n    if x:\n        return 1\n    else:\n        raise ValueError(x)\n    x += 1\n    x += 2\ndef guarded():\n    if False:\n        print(\"off\")\n    try:\n        return 1\n    except ValueError:\n        pass\n    print(\"reachable: the handler falls through\")\n    while True:\n        if guarded():\n            break\n    with open(\"x\") as f:\n        return f\n    print(\"reachable: a context manager can swallow the error\")\ndef ok(x):\n    if x:\n        return 1\n    return 2",
+  ".venv/lib/skip.py": "x = 1\n"
+}

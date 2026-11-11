@@ -3,14 +3,15 @@
 //! stack, closed, and added back. Replaces `src/renderer/dock/dockView.ts`.
 
 use super::Workspace;
+use crate::app_state;
 use crate::palette::{corner_mark, Choice};
 use crate::panels;
 use crate::theme::{ForgeTheme, Theme};
 use forge_core::dock::{self as model, Dir, DockNode, Zone};
 use gpui_kit::{
-    div, prelude::FluentBuilder, px, relative, AnyElement, AppContext, Bounds, Context, DragMoveEvent,
-    InteractiveElement, IntoElement, ParentElement, Pixels, Point, Render, SharedString, StatefulInteractiveElement,
-    Styled, Window,
+    div, prelude::FluentBuilder, px, relative, Animation, AnimationExt, AnyElement, AppContext, Bounds, Context,
+    DragMoveEvent, InteractiveElement, IntoElement, ParentElement, Pixels, Point, Render, SharedString,
+    StatefulInteractiveElement, Styled, Window,
 };
 
 /// A divider being dragged: which split, and which pair of its children.
@@ -28,6 +29,25 @@ pub(crate) struct DraggedPanel {
 
 /// What's drawn under the mouse while dragging.
 pub(crate) struct DragGhost(Option<SharedString>);
+
+#[derive(Default)]
+pub(super) struct DockMotion {
+    seen: Option<model::Transition>,
+    active: Option<model::Transition>,
+}
+
+impl DockMotion {
+    fn observe(&mut self, transition: Option<model::Transition>, enabled: bool) -> Option<model::Transition> {
+        if transition != self.seen {
+            self.seen = transition;
+            self.active = transition.filter(|_| enabled);
+        }
+        if !enabled {
+            self.active = None;
+        }
+        self.active
+    }
+}
 
 impl Render for DragGhost {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -49,16 +69,35 @@ impl Render for DragGhost {
 
 impl Workspace {
     pub(super) fn render_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let root = self.tasks.root().clone();
+        let root = self.docked_root();
         let t = cx.global::<ForgeTheme>().0.clone();
-        div()
+        let dock = div()
+            .debug_selector(|| "dock-body".into())
             .size_full()
             .flex()
             .min_w_0()
             .min_h_0()
             .when(self.editing_layout, |d| d.bg(t.bg))
-            .child(self.render_node(&root, window, cx))
-            .into_any_element()
+            .children(root.as_ref().map(|root| self.render_node(root, window, cx)));
+        match self.dock_motion.observe(self.tasks.transition(), app_state::settings(cx).animations) {
+            Some(transition) => {
+                let task = transition.kind == model::TransitionKind::Task;
+                dock.with_animation(
+                    SharedString::from(format!("dock-motion-{}", transition.revision)),
+                    Animation::new(std::time::Duration::from_millis(if task { 220 } else { 180 }))
+                        .with_easing(|progress| 1.0 - (1.0 - progress).powi(3)),
+                    move |dock, progress| {
+                        dock.relative().top(px(if task { 6.0 * (1.0 - progress) } else { 0.0 })).opacity(if task {
+                            progress
+                        } else {
+                            0.4 + 0.6 * progress
+                        })
+                    },
+                )
+                .into_any_element()
+            }
+            None => dock.into_any_element(),
+        }
     }
 
     fn render_node(&mut self, node: &DockNode, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -135,7 +174,8 @@ impl Workspace {
         pos: Point<Pixels>,
         cx: &mut Context<Self>,
     ) {
-        let Some(DockNode::Split { sizes, .. }) = model::find_node(self.tasks.root(), split) else { return };
+        let Some(docked) = self.docked_root() else { return };
+        let Some(DockNode::Split { sizes, .. }) = model::find_node(&docked, split) else { return };
         if index + 1 >= sizes.len() {
             return;
         }
@@ -155,9 +195,8 @@ impl Workspace {
         let mut next = sizes.clone();
         next[index] = a;
         next[index + 1] = pair - a;
-        let root = model::resize(self.tasks.root(), split, &next);
-        if &root != self.tasks.root() {
-            self.tasks.changed(root);
+        if next != *sizes {
+            self.resize_docked(split, &next);
             self.layouts_changed(cx);
             cx.notify();
         }
@@ -183,11 +222,11 @@ impl Workspace {
                 .id(SharedString::from(format!("dock-tab-{p}")))
                 .flex()
                 .items_center()
-                .gap(px(6.0))
-                .h(px(24.0))
-                .px(px(9.0))
-                .rounded(px(2.0))
-                .text_size(px(10.0))
+                .gap(t.px(6.0))
+                .h(t.px(24.0))
+                .px(t.px(9.0))
+                .rounded(t.px(2.0))
+                .text_size(t.px(10.0))
                 .whitespace_nowrap()
                 .cursor_pointer()
                 .text_color(if on { t.heat_2 } else { t.fg_muted })
@@ -199,7 +238,7 @@ impl Workspace {
                     d.child(
                         div()
                             .id(SharedString::from(format!("dock-close-{p}")))
-                            .px(px(2.0))
+                            .px(t.px(2.0))
                             .text_color(t.fg_muted)
                             .hover(|s| s.text_color(t.err))
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -218,19 +257,46 @@ impl Workspace {
             .flex()
             .flex_none()
             .items_center()
-            .gap(px(6.0))
-            .h(px(30.0))
-            .pl(px(10.0))
-            .pr(px(6.0))
+            .gap(t.px(6.0))
+            .h(t.px(30.0))
+            .pl(t.px(10.0))
+            .pr(t.px(6.0))
             .border_b_1()
             .border_color(t.border)
-            .child(div().flex().gap(px(2.0)).min_w_0().overflow_hidden().children(tabs))
+            .child(div().flex().gap(t.px(2.0)).min_w_0().overflow_hidden().children(tabs))
             .child(
                 div()
                     .flex_1()
                     .flex()
                     .justify_end()
                     .min_w_0()
+                    .when(!collapsed && !matches!(active, "editor" | "terminal"), |d| {
+                        d.child(
+                            div()
+                                .id(SharedString::from(format!("float-{active}")))
+                                .debug_selector({
+                                    let name = format!("float-{active}");
+                                    move || name.clone()
+                                })
+                                .px(t.px(6.0))
+                                .cursor_pointer()
+                                .text_color(t.fg_muted)
+                                .hover(|s| s.text_color(t.heat_2))
+                                .tooltip(|window, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new("Open panel in a separate window")
+                                        .build(window, cx)
+                                })
+                                .on_click({
+                                    let panel = model_panel_id(active);
+                                    cx.listener(move |this, _, window, cx| {
+                                        if let Some(panel) = panel {
+                                            this.float_panel(panel, window, cx);
+                                        }
+                                    })
+                                })
+                                .child("↗"),
+                        )
+                    })
                     .when(active == "terminal" && !collapsed, |d| {
                         d.child(crate::panels::terminal::actions(&self.terminal, &t))
                     })
@@ -321,28 +387,29 @@ impl Workspace {
     /// The floating bar of Edit Layout mode: add a panel back, reset, done.
     pub(super) fn render_edit_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.global::<ForgeTheme>().0.clone();
-        let hidden = self.tasks.hidden_panels();
+        let hidden: Vec<_> =
+            self.tasks.hidden_panels().into_iter().filter(|p| !self.floating.contains_key(p)).collect();
         let button = |id: &'static str, label: &'static str, primary: bool| {
             div()
                 .id(id)
-                .px(px(8.0))
-                .py(px(3.0))
+                .px(t.px(8.0))
+                .py(t.px(3.0))
                 .border_1()
                 .border_color(if primary { t.heat_2 } else { t.border })
-                .rounded(px(2.0))
+                .rounded(t.px(2.0))
                 .bg(if primary { t.heat_3 } else { t.bg })
                 .text_color(if primary { t.on_heat } else { t.fg })
-                .text_size(px(12.0))
+                .text_size(t.px(12.0))
                 .cursor_pointer()
                 .child(label)
         };
-        div().absolute().bottom(px(36.0)).left_0().right_0().flex().justify_center().child(
+        div().absolute().bottom(t.px(36.0)).left_0().right_0().flex().justify_center().child(
             div()
                 .flex()
                 .items_center()
-                .gap(px(10.0))
-                .px(px(12.0))
-                .py(px(8.0))
+                .gap(t.px(10.0))
+                .px(t.px(12.0))
+                .py(t.px(8.0))
                 .bg(t.raised)
                 .border_1()
                 .border_color(t.heat_2)
@@ -350,7 +417,7 @@ impl Workspace {
                 .child(
                     div()
                         .text_color(t.fg_muted)
-                        .text_size(px(12.0))
+                        .text_size(t.px(12.0))
                         .child("Edit Layout: drag tabs onto a side or the middle of a panel"),
                 )
                 .child(button("edit-add", "Add panel…", false).when(hidden.is_empty(), |d| d.opacity(0.5)).on_click(
@@ -359,6 +426,7 @@ impl Workspace {
                             .tasks
                             .hidden_panels()
                             .into_iter()
+                            .filter(|p| !this.floating.contains_key(p))
                             .map(|p| {
                                 Choice::new(panels::title(p), move |ws, _, cx| {
                                     ws.tasks.add_panel(p);

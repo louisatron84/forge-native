@@ -56,7 +56,13 @@ pub fn apply_theme(cx: &mut App) {
         forge_core::settings::Theme::Molten => ThemeName::Molten,
         forge_core::settings::Theme::Plain => ThemeName::Plain,
     };
-    let t = Arc::new(Theme::get(name));
+    let mut theme = Theme::get(name);
+    theme.ui_scale = match state(cx).settings.density {
+        forge_core::settings::Density::Compact => 0.88,
+        forge_core::settings::Density::Normal => 1.0,
+        forge_core::settings::Density::Roomy => 1.12,
+    };
+    let t = Arc::new(theme);
     cx.set_global(ForgeTheme(t.clone()));
     let kit = KitTheme::global_mut(cx);
     kit.mode = ThemeMode::Dark;
@@ -119,7 +125,7 @@ pub fn apply_theme(cx: &mut App) {
 pub fn update_settings(cx: &mut App, f: impl FnOnce(&mut Settings)) -> std::io::Result<()> {
     let mut next = cx.global::<AppState>().settings.clone();
     f(&mut next);
-    let theme_changed = next.theme != cx.global::<AppState>().settings.theme;
+    let theme_changed = next.theme != state(cx).settings.theme || next.density != state(cx).settings.density;
     cx.global::<AppState>().user.save_settings(&next)?;
     cx.global_mut::<AppState>().settings = next;
     if theme_changed {

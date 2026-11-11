@@ -7,5 +7,6 @@ pub mod python;
 pub mod runner;
 pub mod tests;
 pub mod tools;
+pub mod trace;
 
 pub use runner::{PythonRun, RunEvent, RunSpec};

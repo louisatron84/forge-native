@@ -33,6 +33,8 @@ pub struct RunSpec {
     pub cwd: PathBuf,
     /// Extra arguments before the target (e.g. the tracer).
     pub prefix: Vec<String>,
+    /// Report execution/profile/network records through the bundled tracer.
+    pub trace: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,12 +43,14 @@ pub enum RunEvent {
     Output { stream: Stream, text: String },
     Error(String),
     Exit { code: Option<i32>, ms: u64 },
+    Trace(serde_json::Value),
 }
 
 /// A running program.
 pub struct PythonRun {
     child: Arc<Mutex<Option<Child>>>,
     stdin: Arc<Mutex<Option<ChildStdin>>>,
+    _trace: Option<crate::trace::TraceServer>,
 }
 
 impl PythonRun {
@@ -71,6 +75,21 @@ impl PythonRun {
         let mut extra = spec.env.clone();
         extra.insert("PYTHONIOENCODING".into(), "utf-8".into());
         extra.insert("PYTHONUNBUFFERED".into(), "1".into());
+        let trace = if spec.trace {
+            let trace_events = send.clone();
+            match crate::trace::TraceServer::open(move |message| trace_events(RunEvent::Trace(message))) {
+                Ok(server) => {
+                    extra.extend(server.env(&spec.root));
+                    Some(server)
+                }
+                Err(error) => {
+                    send(RunEvent::Error(format!("Live feedback unavailable: {error}")));
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let env = process_env(Some(&spec.root), &extra);
         for python in candidates {
             // Paths (virtualenvs) must exist; bare commands are found on PATH.
@@ -78,12 +97,16 @@ impl PythonRun {
                 continue;
             }
             let mut cmd = Command::new(&python);
-            cmd.arg("-u").args(&spec.prefix).args(&target).args(&spec.args);
+            if trace.is_some() {
+                cmd.args(&spec.prefix).args(crate::trace::trace_command(&target, &spec.args));
+            } else {
+                cmd.arg("-u").args(&spec.prefix).args(&target).args(&spec.args);
+            }
             cmd.current_dir(&spec.cwd).env_clear().envs(&env);
             cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
             hide_window(&mut cmd);
             match cmd.spawn() {
-                Ok(child) => return Some(Self::watch(child, python, file, send)),
+                Ok(child) => return Some(Self::watch(child, python, file, send, trace)),
                 Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
                 Err(e) => {
                     send(RunEvent::Error(e.to_string()));
@@ -102,7 +125,13 @@ impl PythonRun {
         None
     }
 
-    fn watch(mut child: Child, python: String, file: String, send: Arc<dyn Fn(RunEvent) + Send + Sync>) -> PythonRun {
+    fn watch(
+        mut child: Child,
+        python: String,
+        file: String,
+        send: Arc<dyn Fn(RunEvent) + Send + Sync>,
+        trace: Option<crate::trace::TraceServer>,
+    ) -> PythonRun {
         let started = Instant::now();
         send(RunEvent::Start { python, file });
         let queue = Arc::new(Mutex::new(OutputQueue::new(MAX_WAITING_CHARS)));
@@ -188,7 +217,7 @@ impl PythonRun {
                 send(RunEvent::Exit { code, ms: started.elapsed().as_millis() as u64 });
             });
         }
-        PythonRun { child, stdin }
+        PythonRun { child, stdin, _trace: trace }
     }
 
     /// Text typed into the program (for `input()`).

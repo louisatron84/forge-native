@@ -327,6 +327,9 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         match event {
+            InspectEvent::Action("connect.apply") => self.apply_box_preview(window, cx),
+            InspectEvent::Action("openapi.apply") => self.apply_openapi_preview(window, cx),
+            InspectEvent::Action(_) => {}
             InspectEvent::Close => {
                 self.git.diff = None;
                 self.git_inspect.update(cx, |p, _| p.open = false);

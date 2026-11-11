@@ -6,9 +6,16 @@ use crate::app_state;
 use crate::theme::ForgeTheme;
 use forge_core::dock::TASKS;
 use gpui_kit::{
-    div, prelude::FluentBuilder, px, Context, FontWeight, InteractiveElement, IntoElement, ParentElement, SharedString,
+    div, prelude::FluentBuilder, Context, FontWeight, InteractiveElement, IntoElement, ParentElement, SharedString,
     StatefulInteractiveElement, Styled, Window,
 };
+
+pub(super) struct SuggestionFile {
+    entity: gpui_kit::EntityId,
+    version: u64,
+    path: String,
+    hints: forge_core::suggest::FileHints,
+}
 
 fn task_name(task: &str) -> &'static str {
     match task {
@@ -29,18 +36,89 @@ fn task_tip(task: &str) -> &'static str {
 }
 
 impl Workspace {
+    fn context_tools(&mut self, cx: &Context<Self>) -> Vec<forge_core::suggest::Suggestion> {
+        use forge_core::suggest::{suggest_tools, DebugStatus, FileHints, WorkContext};
+        let mut problems = 0;
+        let file = self.active_doc().and_then(|entity| {
+            let doc = &entity.read(cx).doc;
+            let extension = std::path::Path::new(doc.path()).extension()?.to_str()?;
+            if doc.large || !(extension.eq_ignore_ascii_case("py") || extension.eq_ignore_ascii_case("pyw")) {
+                return None;
+            }
+            problems = self.editors[self.tabs.active_group.min(1)]
+                .read(cx)
+                .diagnostics
+                .iter()
+                .filter(|d| d.severity <= 2)
+                .count();
+            let changed = self.suggestion_file.as_ref().is_none_or(|cache| {
+                cache.entity != entity.entity_id() || cache.version != doc.version || cache.path != doc.path()
+            });
+            if changed {
+                self.suggestion_file = Some(SuggestionFile {
+                    entity: entity.entity_id(),
+                    version: doc.version,
+                    path: doc.path().into(),
+                    hints: FileHints::scan(doc.path(), &doc.text()),
+                });
+            }
+            self.suggestion_file.as_ref().map(|cache| cache.hints)
+        });
+        let changes = self.git_panel.read(cx).change_count();
+        suggest_tools(
+            &WorkContext {
+                task: self.tasks.current(),
+                file,
+                problems,
+                changes,
+                debug: if self.debug.stopped.is_some() {
+                    DebugStatus::Paused
+                } else if self.debug.running {
+                    DebugStatus::Running
+                } else {
+                    DebugStatus::Idle
+                },
+                last_run_failed: self.run.last_failed,
+            },
+            |panel| self.panel_is_shown(panel),
+            3,
+        )
+    }
+
     pub(super) fn render_toolbar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.global::<ForgeTheme>().0.clone();
+        let suggestions = self.context_tools(cx).into_iter().map(|s| {
+            let selector = format!("suggest-{}", s.id);
+            div()
+                .id(SharedString::from(selector.clone()))
+                .debug_selector(move || selector.clone())
+                .px(t.px(7.0))
+                .py(t.px(3.0))
+                .text_size(t.px(11.0))
+                .text_color(t.fg_muted)
+                .whitespace_nowrap()
+                .cursor_pointer()
+                .hover(|d| d.bg(t.bg_hover).text_color(t.heat_2))
+                .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(s.why.clone()).build(window, cx))
+                .on_click(cx.listener(move |ws, _, window, cx| {
+                    if let Some(panel) = s.panel {
+                        ws.reveal_panel(panel, cx);
+                    } else if let Some(command) = s.command {
+                        ws.run_command(command, window, cx);
+                    }
+                }))
+                .child(s.label)
+        });
         let current = self.tasks.current();
         let tasks = TASKS.iter().map(|task| {
             let on = *task == current;
             let task: &'static str = task;
             div()
                 .id(SharedString::from(format!("task-{task}")))
-                .px(px(12.0))
-                .py(px(3.0))
+                .px(t.px(12.0))
+                .py(t.px(3.0))
                 .border_1()
-                .rounded(px(2.0))
+                .rounded(t.px(2.0))
                 .font_weight(FontWeight::MEDIUM)
                 .cursor_pointer()
                 .when(on, |d| d.text_color(t.heat_2).border_color(t.heat_2).border_b_2())
@@ -57,16 +135,22 @@ impl Workspace {
             .flex()
             .flex_none()
             .items_center()
-            .gap(px(12.0))
-            .px(px(10.0))
-            .py(px(6.0))
+            .gap(t.px(12.0))
+            .px(t.px(10.0))
+            .py(t.px(6.0))
             .bg(t.bg_panel)
             .border_b_1()
             .border_color(t.border)
             .child(
-                div().text_size(px(15.0)).font_weight(FontWeight::BOLD).text_color(t.heat_2).mr(px(6.0)).child("Forge"),
+                div()
+                    .text_size(t.px(15.0))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(t.heat_2)
+                    .mr(t.px(6.0))
+                    .child("Forge"),
             )
-            .child(div().flex().gap(px(4.0)).ml(px(6.0)).children(tasks))
+            .child(div().flex().gap(t.px(4.0)).ml(t.px(6.0)).children(tasks))
+            .child(div().flex().min_w_0().overflow_hidden().children(suggestions))
             .child(div().flex_1())
             .child(
                 div()
@@ -74,15 +158,15 @@ impl Workspace {
                     .overflow_hidden()
                     .text_ellipsis()
                     .whitespace_nowrap()
-                    .text_size(px(12.0))
+                    .text_size(t.px(12.0))
                     .text_color(if folder.is_some() { t.fg } else { t.fg_muted })
                     .child(folder.unwrap_or_else(|| "No folder open".into())),
             )
             .child(
                 div()
                     .id("run-button")
-                    .px(px(14.0))
-                    .py(px(5.0))
+                    .px(t.px(14.0))
+                    .py(t.px(5.0))
                     .bg(t.heat_3)
                     .text_color(t.on_heat)
                     .font_weight(FontWeight::SEMIBOLD)
@@ -131,9 +215,9 @@ impl Workspace {
         let item = |id: &'static str, text: String, command: Option<&'static str>, cx: &mut Context<Self>| {
             div()
                 .id(id)
-                .px(px(7.0))
-                .py(px(2.0))
-                .rounded(px(2.0))
+                .px(t.px(7.0))
+                .py(t.px(2.0))
+                .rounded(t.px(2.0))
                 .whitespace_nowrap()
                 .when_some(command, |d, command| {
                     d.cursor_pointer()
@@ -147,14 +231,14 @@ impl Workspace {
             .flex()
             .flex_none()
             .items_center()
-            .gap(px(2.0))
-            .min_h(px(24.0))
-            .px(px(8.0))
+            .gap(t.px(2.0))
+            .min_h(t.px(24.0))
+            .px(t.px(8.0))
             .bg(t.bg_panel)
             .border_t_1()
             .border_color(t.border)
             .text_color(t.fg_muted)
-            .text_size(px(12.0))
+            .text_size(t.px(12.0))
             .when(
                 matches!(
                     app_state::state(cx).updater.state(),
@@ -165,7 +249,7 @@ impl Workspace {
                     d.child(
                         div()
                             .id("sb-update")
-                            .px(px(7.0))
+                            .px(t.px(7.0))
                             .text_color(t.accent)
                             .cursor_pointer()
                             .child(if ready { "Update ready — Restart now" } else { "Update available" })
@@ -179,10 +263,10 @@ impl Workspace {
                     div()
                         .id("sb-problems")
                         .flex()
-                        .gap(px(6.0))
-                        .px(px(7.0))
-                        .py(px(2.0))
-                        .rounded(px(2.0))
+                        .gap(t.px(6.0))
+                        .px(t.px(7.0))
+                        .py(t.px(2.0))
+                        .rounded(t.px(2.0))
                         .cursor_pointer()
                         .hover(|s| s.bg(t.bg_hover))
                         .on_click(cx.listener(|this, _, window, cx| this.run_command("panel.problems", window, cx)))
@@ -194,9 +278,9 @@ impl Workspace {
                 d.child(
                     div()
                         .id("sb-lsp-install")
-                        .px(px(7.0))
-                        .py(px(2.0))
-                        .rounded(px(2.0))
+                        .px(t.px(7.0))
+                        .py(t.px(2.0))
+                        .rounded(t.px(2.0))
                         .text_color(t.warn)
                         .cursor_pointer()
                         .hover(|s| s.bg(t.bg_hover))
@@ -208,9 +292,9 @@ impl Workspace {
                 d.child(
                     div()
                         .id("sb-deps")
-                        .px(px(7.0))
-                        .py(px(2.0))
-                        .rounded(px(2.0))
+                        .px(t.px(7.0))
+                        .py(t.px(2.0))
+                        .rounded(t.px(2.0))
                         .whitespace_nowrap()
                         .text_color(t.warn)
                         .cursor_pointer()
@@ -223,9 +307,9 @@ impl Workspace {
                 d.child(
                     div()
                         .id("sb-python")
-                        .px(px(7.0))
-                        .py(px(2.0))
-                        .rounded(px(2.0))
+                        .px(t.px(7.0))
+                        .py(t.px(2.0))
+                        .rounded(t.px(2.0))
                         .whitespace_nowrap()
                         .cursor_pointer()
                         .hover(|s| s.bg(t.bg_hover).text_color(t.fg))
@@ -240,9 +324,9 @@ impl Workspace {
                 d.child(
                     div()
                         .id("sb-run")
-                        .px(px(7.0))
-                        .py(px(2.0))
-                        .rounded(px(2.0))
+                        .px(t.px(7.0))
+                        .py(t.px(2.0))
+                        .rounded(t.px(2.0))
                         .whitespace_nowrap()
                         .cursor_pointer()
                         .hover(|s| s.bg(t.bg_hover).text_color(t.fg))
@@ -252,7 +336,7 @@ impl Workspace {
             })
             .child(div().flex_1())
             .when_some(self.note.clone(), |d, note| {
-                d.child(div().px(px(7.0)).min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().child(note))
+                d.child(div().px(t.px(7.0)).min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().child(note))
             })
             .children(items)
     }

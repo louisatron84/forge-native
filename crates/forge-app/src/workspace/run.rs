@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 /// The run state of a window.
 #[derive(Default)]
 pub(crate) struct RunState {
+    pub data_target: Option<String>,
     pub file: RunFile,
     pub file_path: Option<PathBuf>,
     /// The configuration Run and Debug use; None = the open file.
@@ -30,6 +31,7 @@ pub(crate) struct RunState {
     pub _pump: Option<gpui_kit::Task<()>>,
     /// What to do when the current run ends (pip / venv runs re-check the environment).
     pub after: Option<super::pyenv::AfterRun>,
+    pub last_failed: bool,
 }
 
 impl Workspace {
@@ -133,6 +135,10 @@ impl Workspace {
 
     /// Run the open file (or the selected configuration) with its output in the Output panel.
     pub(crate) fn run_current_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let data_target = self.run.data_target.take();
+        let trace = data_target.is_some()
+            || self.panel_is_shown("network")
+            || (self.effective_settings(cx).show_runs_on_graph && self.panel_is_shown("graph"));
         self.reveal_panel("output", cx);
         let spec = match self.launch_spec(cx) {
             Ok(s) => s,
@@ -161,7 +167,7 @@ impl Workspace {
         }
         let root = self.root.clone().unwrap_or_else(|| PathBuf::from(&spec.cwd));
         let python = Some(self.effective_settings(cx).python_path).filter(|p| !p.is_empty());
-        let run_spec = RunSpec {
+        let mut run_spec = RunSpec {
             root,
             python,
             program: spec.program,
@@ -170,7 +176,11 @@ impl Workspace {
             env: spec.env,
             cwd: PathBuf::from(&spec.cwd),
             prefix: Vec::new(),
+            trace,
         };
+        if let Some(target) = data_target {
+            run_spec.env.insert("FORGE_TRACE_DATA".into(), target);
+        }
         self.start_run(run_spec, window, cx);
         self.focus_editor(window, cx);
     }
@@ -179,8 +189,13 @@ impl Workspace {
     pub(crate) fn start_run(&mut self, spec: RunSpec, window: &mut Window, cx: &mut Context<Self>) {
         self.stop_run(cx);
         self.run.after = None;
+        self.run.last_failed = false;
+        self.project_graph.update(cx, |p, cx| p.begin_run(cx));
         self.run.id += 1;
         let id = self.run.id;
+        self.network.update(cx, |p, cx| p.begin(id, cx));
+        self.pipeline.update(cx, |p, cx| p.begin(id, cx));
+        let project = self.root.clone();
         let (tx, mut rx) = futures::channel::mpsc::unbounded::<RunEvent>();
         self.run.current = PythonRun::start(spec, move |e| {
             let _ = tx.unbounded_send(e);
@@ -193,12 +208,22 @@ impl Workspace {
                     }
                     let out = ws.output.clone();
                     match e {
+                        RunEvent::Trace(message) => {
+                            if ws.root == project {
+                                ws.on_trace_message(&message, cx)
+                            }
+                        }
                         RunEvent::Start { python, .. } => out.update(cx, |o, cx| o.started(&python, cx)),
                         RunEvent::Output { stream, text } => {
                             out.update(cx, |o, cx| o.append(stream == Stream::Stderr, &text, cx))
                         }
                         RunEvent::Error(m) => out.update(cx, |o, cx| o.error(&m, cx)),
                         RunEvent::Exit { code, ms } => {
+                            if ws.root == project {
+                                ws.project_graph.update(cx, |p, cx| p.end_run(cx));
+                                ws.network.update(cx, |p, cx| p.end(cx));
+                                ws.run.last_failed = code.is_some_and(|code| code != 0);
+                            }
                             out.update(cx, |o, cx| o.finished(code, ms, cx));
                             ws.run.current = None;
                             if let Some(after) = ws.run.after.take() {

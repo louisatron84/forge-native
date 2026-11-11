@@ -88,6 +88,7 @@ impl Workspace {
         self.debug.running = true;
         self.debug.starting.insert(0);
         self.debug.launch = Some(arguments.clone());
+        self.tasks.begin_debug(self.effective_settings(cx).switch_to_debug_task);
         self.reveal_panel("debug", cx);
         self.debug_panel.update(cx, |p, cx| {
             p.status = "Starting debugpy…".into();
@@ -139,6 +140,8 @@ impl Workspace {
                 .detach();
         }
         self.debug.running = false;
+        self.tasks.end_debug();
+        self.layouts_changed(cx);
         self.debug.paused = false;
         self.debug.starting.clear();
         self.debug.stopped = None;

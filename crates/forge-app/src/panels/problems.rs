@@ -5,7 +5,7 @@
 use crate::theme::ForgeTheme;
 use forge_lsp::server::Diagnostic;
 use gpui_kit::{
-    div, prelude::FluentBuilder, px, AnyElement, Context, EventEmitter, InteractiveElement, IntoElement, ParentElement,
+    div, prelude::FluentBuilder, AnyElement, Context, EventEmitter, InteractiveElement, IntoElement, ParentElement,
     Render, SharedString, StatefulInteractiveElement, Styled, Window,
 };
 use std::path::PathBuf;
@@ -64,12 +64,12 @@ impl Render for ProblemsPanel {
             rows.push(
                 div()
                     .flex()
-                    .gap(px(6.0))
-                    .px(px(8.0))
-                    .py(px(3.0))
+                    .gap(t.px(6.0))
+                    .px(t.px(8.0))
+                    .py(t.px(3.0))
                     .font_weight(gpui_kit::FontWeight::MEDIUM)
                     .child(rel.clone())
-                    .child(div().text_size(px(11.0)).text_color(t.fg_muted).child(list.len().to_string()))
+                    .child(div().text_size(t.px(11.0)).text_color(t.fg_muted).child(list.len().to_string()))
                     .into_any_element(),
             );
             for (di, d) in list.iter().enumerate() {
@@ -90,14 +90,14 @@ impl Render for ProblemsPanel {
                         .id(SharedString::from(format!("problem-{fi}-{di}")))
                         .flex()
                         .items_center()
-                        .gap(px(8.0))
-                        .pl(px(20.0))
-                        .pr(px(8.0))
-                        .py(px(2.0))
+                        .gap(t.px(8.0))
+                        .pl(t.px(20.0))
+                        .pr(t.px(8.0))
+                        .py(t.px(2.0))
                         .cursor_pointer()
                         .hover(|s| s.bg(t.bg_hover))
                         .on_click(cx.listener(move |_, _, _, cx| cx.emit(ProblemsEvent::Open(p.clone(), line, col))))
-                        .child(div().w(px(14.0)).text_color(color).child(icon))
+                        .child(div().w(t.px(14.0)).text_color(color).child(icon))
                         .child(
                             div()
                                 .flex_1()
@@ -107,7 +107,7 @@ impl Render for ProblemsPanel {
                                 .whitespace_nowrap()
                                 .child(d.message.lines().next().unwrap_or("").to_owned()),
                         )
-                        .child(div().flex_none().text_size(px(11.0)).text_color(t.fg_muted).child(where_))
+                        .child(div().flex_none().text_size(t.px(11.0)).text_color(t.fg_muted).child(where_))
                         .into_any_element(),
                 );
             }
@@ -122,10 +122,10 @@ impl Render for ProblemsPanel {
             .id("problems")
             .size_full()
             .overflow_y_scroll()
-            .text_size(px(13.0))
+            .text_size(t.px(13.0))
             .text_color(t.fg)
-            .py(px(4.0))
-            .when(empty, |d| d.child(div().p(px(10.0)).text_color(t.fg_muted).child(status)))
+            .py(t.px(4.0))
+            .when(empty, |d| d.child(div().p(t.px(10.0)).text_color(t.fg_muted).child(status)))
             .children(rows)
     }
 }

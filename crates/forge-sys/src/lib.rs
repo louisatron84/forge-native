@@ -3,8 +3,10 @@
 //! and the `.forge` project folder.
 
 pub mod backups;
+pub mod connect;
 pub mod files;
 pub mod git;
+pub mod openapi;
 pub mod process;
 pub mod project_dir;
 pub mod search;

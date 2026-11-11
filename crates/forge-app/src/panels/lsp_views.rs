@@ -7,7 +7,7 @@ use crate::theme::{ForgeTheme, Theme};
 use forge_lsp::navigation::{symbol_kind, CallItem, DocSymbol, Location, LspPos};
 use forge_lsp::server::LspServer;
 use gpui_kit::{
-    div, prelude::FluentBuilder, px, AnyElement, Context, EventEmitter, FontWeight, HighlightStyle, InteractiveElement,
+    div, prelude::FluentBuilder, AnyElement, Context, EventEmitter, FontWeight, HighlightStyle, InteractiveElement,
     IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, StyledText, Task, Window,
 };
 use std::path::PathBuf;
@@ -17,7 +17,7 @@ use std::sync::Arc;
 pub struct OpenAt(pub PathBuf, pub LspPos);
 
 fn empty(t: &Theme, text: &str) -> AnyElement {
-    div().p(px(10.0)).text_color(t.fg_muted).child(text.to_owned()).into_any_element()
+    div().p(t.px(10.0)).text_color(t.fg_muted).child(text.to_owned()).into_any_element()
 }
 
 // ---------- References ----------
@@ -90,10 +90,10 @@ impl Render for ReferencesPanel {
         } else {
             rows.push(
                 div()
-                    .px(px(10.0))
-                    .py(px(4.0))
+                    .px(t.px(10.0))
+                    .py(t.px(4.0))
                     .text_color(t.fg_muted)
-                    .text_size(px(12.0))
+                    .text_size(t.px(12.0))
                     .child(self.summary.clone())
                     .into_any_element(),
             );
@@ -101,12 +101,12 @@ impl Render for ReferencesPanel {
                 rows.push(
                     div()
                         .flex()
-                        .gap(px(6.0))
-                        .px(px(8.0))
-                        .py(px(3.0))
+                        .gap(t.px(6.0))
+                        .px(t.px(8.0))
+                        .py(t.px(3.0))
                         .font_weight(FontWeight::MEDIUM)
                         .child(rel.clone())
-                        .child(div().text_size(px(11.0)).text_color(t.fg_muted).child(list.len().to_string()))
+                        .child(div().text_size(t.px(11.0)).text_color(t.fg_muted).child(list.len().to_string()))
                         .into_any_element(),
                 );
                 for (fi, f) in list.iter().enumerate() {
@@ -121,10 +121,10 @@ impl Render for ReferencesPanel {
                         div()
                             .id(SharedString::from(format!("ref-{gi}-{fi}")))
                             .flex()
-                            .gap(px(8.0))
-                            .pl(px(20.0))
-                            .pr(px(8.0))
-                            .py(px(1.0))
+                            .gap(t.px(8.0))
+                            .pl(t.px(20.0))
+                            .pr(t.px(8.0))
+                            .py(t.px(1.0))
                             .whitespace_nowrap()
                             .overflow_hidden()
                             .cursor_pointer()
@@ -132,8 +132,8 @@ impl Render for ReferencesPanel {
                             .on_click(cx.listener(move |_, _, _, cx| cx.emit(OpenAt(path.clone(), at))))
                             .child(
                                 div()
-                                    .min_w(px(28.0))
-                                    .text_size(px(11.0))
+                                    .min_w(t.px(28.0))
+                                    .text_size(t.px(11.0))
                                     .text_color(t.fg_muted)
                                     .child((f.location.start.line + 1).to_string()),
                             )
@@ -147,9 +147,9 @@ impl Render for ReferencesPanel {
             .id("references")
             .size_full()
             .overflow_y_scroll()
-            .text_size(px(13.0))
+            .text_size(t.px(13.0))
             .text_color(t.fg)
-            .py(px(4.0))
+            .py(t.px(4.0))
             .children(rows)
     }
 }
@@ -197,16 +197,16 @@ impl OutlinePanel {
                     .id(SharedString::from(format!("outline-{}-{}-{}", s.name_start.line, s.name_start.col, out.len())))
                     .flex()
                     .items_center()
-                    .gap(px(6.0))
-                    .pl(px(8.0 + depth as f32 * 14.0))
-                    .pr(px(8.0))
-                    .h(px(22.0))
+                    .gap(t.px(6.0))
+                    .pl(t.px(8.0 + depth as f32 * 14.0))
+                    .pr(t.px(8.0))
+                    .h(t.px(22.0))
                     .whitespace_nowrap()
                     .cursor_pointer()
                     .when(on, |d| d.bg(t.bg_active))
                     .when(!on, |d| d.hover(|x| x.bg(t.bg_hover)))
                     .on_click(cx.listener(move |_, _, _, cx| cx.emit(OpenAt(PathBuf::new(), at))))
-                    .child(div().w(px(14.0)).text_color(t.accent).child(icon))
+                    .child(div().w(t.px(14.0)).text_color(t.accent).child(icon))
                     .child(s.name.clone())
                     .when_some(s.detail.clone(), |d, detail| {
                         d.child(
@@ -214,7 +214,7 @@ impl OutlinePanel {
                                 .min_w_0()
                                 .overflow_hidden()
                                 .text_ellipsis()
-                                .text_size(px(11.0))
+                                .text_size(t.px(11.0))
                                 .text_color(t.fg_muted)
                                 .child(detail),
                         )
@@ -242,9 +242,9 @@ impl Render for OutlinePanel {
             .id("outline")
             .size_full()
             .overflow_y_scroll()
-            .text_size(px(13.0))
+            .text_size(t.px(13.0))
             .text_color(t.fg)
-            .py(px(4.0))
+            .py(t.px(4.0))
             .children(rows)
     }
 }
@@ -418,10 +418,10 @@ impl CallsPanel {
                 .id(SharedString::from(format!("calls-{path:?}")))
                 .flex()
                 .items_center()
-                .gap(px(6.0))
-                .pl(px(8.0 + depth as f32 * 16.0))
-                .pr(px(8.0))
-                .h(px(22.0))
+                .gap(t.px(6.0))
+                .pl(t.px(8.0 + depth as f32 * 16.0))
+                .pr(t.px(8.0))
+                .h(t.px(22.0))
                 .whitespace_nowrap()
                 .cursor_pointer()
                 .hover(|s| s.bg(t.bg_hover))
@@ -434,7 +434,7 @@ impl CallsPanel {
                 .child(
                     div()
                         .id(SharedString::from(format!("calls-twisty-{p1:?}")))
-                        .w(px(12.0))
+                        .w(t.px(12.0))
                         .text_color(t.fg_muted)
                         .on_click(cx.listener(move |p, _, _, cx| {
                             cx.stop_propagation();
@@ -442,14 +442,14 @@ impl CallsPanel {
                         }))
                         .child(twisty),
                 )
-                .child(div().w(px(14.0)).text_color(t.accent).child(icon))
+                .child(div().w(t.px(14.0)).text_color(t.accent).child(icon))
                 .child(format!("{}{}", node.item.name, if node.recursive { " (recursive)" } else { "" }))
                 .child(
                     div()
                         .min_w_0()
                         .overflow_hidden()
                         .text_ellipsis()
-                        .text_size(px(11.0))
+                        .text_size(t.px(11.0))
                         .text_color(t.fg_muted)
                         .child(where_),
                 )
@@ -458,8 +458,8 @@ impl CallsPanel {
                         div()
                             .id(SharedString::from(format!("calls-site-{path:?}")))
                             .ml_auto()
-                            .px(px(6.0))
-                            .text_size(px(11.0))
+                            .px(t.px(6.0))
+                            .text_size(t.px(11.0))
                             .text_color(t.link)
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.stop_propagation();
@@ -476,14 +476,14 @@ impl CallsPanel {
         match &node.children {
             None => out.push(
                 div()
-                    .pl(px(24.0 + (depth + 1) as f32 * 16.0))
+                    .pl(t.px(24.0 + (depth + 1) as f32 * 16.0))
                     .text_color(t.fg_muted)
                     .child("Loading…")
                     .into_any_element(),
             ),
             Some(c) if c.is_empty() => out.push(
                 div()
-                    .pl(px(24.0 + (depth + 1) as f32 * 16.0))
+                    .pl(t.px(24.0 + (depth + 1) as f32 * 16.0))
                     .text_color(t.fg_muted)
                     .child(if self.incoming { "No callers found." } else { "No calls found." })
                     .into_any_element(),
@@ -522,24 +522,24 @@ impl Render for CallsPanel {
             .id("calls")
             .size_full()
             .overflow_y_scroll()
-            .text_size(px(13.0))
+            .text_size(t.px(13.0))
             .text_color(t.fg)
-            .py(px(4.0))
+            .py(t.px(4.0))
             .when_some(title, |d, title| {
                 d.child(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(10.0))
-                        .px(px(10.0))
-                        .py(px(4.0))
-                        .text_size(px(12.0))
+                        .gap(t.px(10.0))
+                        .px(t.px(10.0))
+                        .py(t.px(4.0))
+                        .text_size(t.px(12.0))
                         .text_color(t.fg_muted)
                         .child(title)
                         .child(
                             div()
                                 .id("calls-direction")
-                                .px(px(6.0))
+                                .px(t.px(6.0))
                                 .border_1()
                                 .border_color(t.border)
                                 .cursor_pointer()

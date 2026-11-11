@@ -11,8 +11,8 @@ use forge_sys::files::{create_entry, read_dir, rename_entry, DirEntry};
 use futures::{channel::mpsc, FutureExt, StreamExt};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
 use gpui_kit::{
-    anchored, deferred, div, prelude::FluentBuilder, px, uniform_list, AnyElement, App, AppContext, ClipboardItem,
-    Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, InteractiveElement, IntoElement, KeyDownEvent,
+    anchored, deferred, div, prelude::FluentBuilder, uniform_list, AnyElement, App, AppContext, ClipboardItem, Context,
+    Entity, EventEmitter, FocusHandle, Focusable, FontWeight, InteractiveElement, IntoElement, KeyDownEvent,
     MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy, StatefulInteractiveElement,
     Styled, Subscription, UniformListScrollHandle, Window,
 };
@@ -22,6 +22,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const INDENT: f32 = 12.0;
+#[cfg(test)]
+use gpui_kit::px;
+
 const ROW_HEIGHT: f32 = 22.0;
 
 pub enum FileTreeEvent {
@@ -645,13 +648,13 @@ impl FileTree {
     // ---------- drawing ----------
 
     fn render_row(&self, row: &Row, index: usize, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let pad = px(4.0 + row.depth as f32 * INDENT);
+        let pad = t.px(4.0 + row.depth as f32 * INDENT);
         match &row.kind {
             RowKind::Message(text) => div()
-                .h(px(ROW_HEIGHT))
+                .h(t.px(ROW_HEIGHT))
                 .flex()
                 .items_center()
-                .pl(pad + px(16.0))
+                .pl(pad + t.px(16.0))
                 .text_color(t.fg_muted)
                 .child(text.clone())
                 .into_any_element(),
@@ -679,11 +682,11 @@ impl FileTree {
                 });
                 div()
                     .id(("tree-row", index))
-                    .h(px(ROW_HEIGHT))
+                    .h(t.px(ROW_HEIGHT))
                     .flex()
                     .items_center()
                     .pl(pad)
-                    .pr(px(8.0))
+                    .pr(t.px(8.0))
                     .whitespace_nowrap()
                     .cursor_pointer()
                     .when(selected, |d| d.bg(t.bg_active))
@@ -699,7 +702,7 @@ impl FileTree {
                             this.open_menu(ev.position, Some(e2.clone()), cx);
                         }),
                     )
-                    .child(div().w(px(16.0)).flex_none().text_center().text_color(t.fg_muted).child(chevron))
+                    .child(div().w(t.px(16.0)).flex_none().text_center().text_color(t.fg_muted).child(chevron))
                     .child(
                         div()
                             .overflow_hidden()
@@ -709,13 +712,13 @@ impl FileTree {
                             .when(git == Some(ChangeKind::Deleted), |d| d.line_through())
                             .child(entry.name.clone()),
                     )
-                    .when(dirty_folder, |d| d.child(div().pl(px(4.0)).text_color(t.git_modified).child("•")))
+                    .when(dirty_folder, |d| d.child(div().pl(t.px(4.0)).text_color(t.git_modified).child("•")))
                     .when_some(git.zip(git_color), |d, (k, c)| {
                         d.child(
                             div()
                                 .ml_auto()
-                                .pl(px(8.0))
-                                .text_size(px(11.0))
+                                .pl(t.px(8.0))
+                                .text_size(t.px(11.0))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(c)
                                 .child(k.letter()),
@@ -734,13 +737,13 @@ impl FileTree {
             .flex()
             .flex_col()
             .pl(pad)
-            .pr(px(8.0))
+            .pr(t.px(8.0))
             .py_0()
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .child(div().w(px(16.0)).flex_none().text_center().text_color(t.fg_muted).child(if is_dir {
+                    .child(div().w(t.px(16.0)).flex_none().text_center().text_color(t.fg_muted).child(if is_dir {
                         "▸"
                     } else {
                         ""
@@ -755,14 +758,14 @@ impl FileTree {
                             // Input::h configures multiline inputs only. Override
                             // the frame style so this fits the 22px virtual row.
                             .child(
-                                Styled::h(Input::new(&ed.input).appearance(false).cleanable(false), px(20.0))
+                                Styled::h(Input::new(&ed.input).appearance(false).cleanable(false), t.px(20.0))
                                     .py_0()
-                                    .px(px(4.0)),
+                                    .px(t.px(4.0)),
                             ),
                     ),
             )
             .when_some(ed.problem.clone(), |d, p| {
-                d.child(div().pl(px(16.0)).text_size(px(11.0)).text_color(t.err).child(p))
+                d.child(div().pl(t.px(16.0)).text_size(t.px(11.0)).text_color(t.err).child(p))
             })
             .into_any_element()
     }
@@ -784,15 +787,15 @@ impl FileTree {
             ]);
         }
         let rows = items.into_iter().enumerate().map(|(i, item)| match item {
-            None => div().h(px(1.0)).my(px(4.0)).bg(t.border).into_any_element(),
+            None => div().h(t.px(1.0)).my(t.px(4.0)).bg(t.border).into_any_element(),
             Some((label, keys, action)) => div()
                 .id(("tree-menu", i))
                 .flex()
                 .justify_between()
-                .gap(px(24.0))
-                .px(px(10.0))
-                .py(px(4.0))
-                .rounded(px(2.0))
+                .gap(t.px(24.0))
+                .px(t.px(10.0))
+                .py(t.px(4.0))
+                .rounded(t.px(2.0))
                 .cursor_pointer()
                 .hover(|s| s.bg(t.bg_active))
                 .on_click(cx.listener(move |this, _, window, cx| this.run_menu(action.clone(), window, cx)))
@@ -804,14 +807,14 @@ impl FileTree {
             anchored().position(menu.position).snap_to_window().child(
                 div()
                     .id("tree-menu")
-                    .min_w(px(200.0))
-                    .p(px(4.0))
+                    .min_w(t.px(200.0))
+                    .p(t.px(4.0))
                     .bg(t.bg_panel)
                     .border_1()
                     .border_color(t.line_strong)
-                    .rounded(px(2.0))
+                    .rounded(t.px(2.0))
                     .shadow_lg()
-                    .text_size(px(13.0))
+                    .text_size(t.px(13.0))
                     .text_color(t.fg)
                     .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                         this.menu = None;
@@ -831,15 +834,15 @@ impl FileTree {
                 .id(("recent", i))
                 .flex()
                 .flex_col()
-                .px(px(12.0))
-                .py(px(4.0))
+                .px(t.px(12.0))
+                .py(t.px(4.0))
                 .cursor_pointer()
                 .hover(|s| s.bg(t.bg_hover))
                 .on_click(cx.listener(move |_, _, _, cx| cx.emit(FileTreeEvent::OpenRecent(f.clone()))))
                 .child(div().child(name))
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(t.px(11.0))
                         .text_color(t.fg_muted)
                         .overflow_hidden()
                         .text_ellipsis()
@@ -849,8 +852,10 @@ impl FileTree {
         div()
             .flex()
             .flex_col()
-            .py(px(4.0))
-            .child(div().px(px(12.0)).py(px(6.0)).text_color(t.fg_muted).child("Choose a project folder to work in."))
+            .py(t.px(4.0))
+            .child(
+                div().px(t.px(12.0)).py(t.px(6.0)).text_color(t.fg_muted).child("Choose a project folder to work in."),
+            )
             .children(
                 [("Open Folder…", "tree-open-folder", false), ("New Project Folder…", "tree-new-project", true)]
                     .into_iter()
@@ -858,8 +863,8 @@ impl FileTree {
                         div()
                             .id(id)
                             .debug_selector(|| id.to_owned())
-                            .px(px(12.0))
-                            .py(px(6.0))
+                            .px(t.px(12.0))
+                            .py(t.px(6.0))
                             .cursor_pointer()
                             .hover(|s| s.bg(t.bg_hover))
                             .child(label)
@@ -870,7 +875,12 @@ impl FileTree {
             )
             .when(!self.recent.is_empty(), |d| {
                 d.child(
-                    div().px(px(12.0)).py(px(6.0)).text_size(px(10.0)).text_color(t.fg_muted).child("RECENT FOLDERS"),
+                    div()
+                        .px(t.px(12.0))
+                        .py(t.px(6.0))
+                        .text_size(t.px(10.0))
+                        .text_color(t.fg_muted)
+                        .child("RECENT FOLDERS"),
                 )
             })
             .children(rows)
@@ -887,7 +897,7 @@ impl Render for FileTree {
             .size_full()
             .flex()
             .flex_col()
-            .text_size(px(13.0))
+            .text_size(t.px(13.0))
             .text_color(t.fg)
             .on_key_down(cx.listener(Self::on_key_down))
             .capture_action(cx.listener(|this, _: &Escape, window, cx| {
@@ -911,19 +921,19 @@ impl Render for FileTree {
             .flex()
             .flex_wrap()
             .flex_none()
-            .gap(px(2.0))
-            .px(px(6.0))
-            .py(px(3.0))
+            .gap(t.px(2.0))
+            .px(t.px(6.0))
+            .py(t.px(3.0))
             .border_b_1()
             .border_color(t.border)
-            .text_size(px(12.0))
+            .text_size(t.px(12.0))
             .children(buttons.into_iter().map(|(label, id, run)| {
                 div()
                     .id(id)
                     .debug_selector(|| id.to_owned())
-                    .px(px(6.0))
-                    .py(px(1.0))
-                    .rounded(px(2.0))
+                    .px(t.px(6.0))
+                    .py(t.px(1.0))
+                    .rounded(t.px(2.0))
                     .text_color(t.fg_muted)
                     .cursor_pointer()
                     .hover(|s| s.bg(t.bg_hover).text_color(t.fg))
@@ -941,13 +951,13 @@ impl Render for FileTree {
         )
         .track_scroll(&self.scroll)
         .size_full()
-        .py(px(4.0));
+        .py(t.px(4.0));
         let project = self.st.root.as_ref().map(|root| root.to_string_lossy().into_owned()).unwrap_or_default();
         base.child(
             div()
-                .px(px(10.0))
-                .py(px(5.0))
-                .text_size(px(11.0))
+                .px(t.px(10.0))
+                .py(t.px(5.0))
+                .text_size(t.px(11.0))
                 .text_color(t.fg_muted)
                 .overflow_hidden()
                 .text_ellipsis()

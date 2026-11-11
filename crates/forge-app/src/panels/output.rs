@@ -7,7 +7,7 @@ use crate::theme::{ForgeTheme, Theme, CODE_FONT};
 use forge_core::output::{find_file_links, strip_ansi};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::{
-    div, prelude::FluentBuilder, px, uniform_list, AnyElement, App, AppContext, ClipboardItem, Context, Entity,
+    div, prelude::FluentBuilder, uniform_list, AnyElement, App, AppContext, ClipboardItem, Context, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ListHorizontalSizingBehavior, ParentElement,
     Render, SharedString, StatefulInteractiveElement, Styled, Subscription, UniformListScrollHandle, Window,
 };
@@ -224,7 +224,7 @@ impl OutputPanel {
             .id(("out-line", i))
             .flex()
             .whitespace_nowrap()
-            .h(px((self.font_size * 1.45).round()))
+            .h(t.px((self.font_size * 1.45).round()))
             .children(segs.iter().enumerate().map(|(j, s)| {
                 let color = Self::color(s.kind, t);
                 match &s.link {
@@ -254,9 +254,9 @@ pub fn actions(panel: &Entity<OutputPanel>, t: &Theme) -> AnyElement {
         let panel = panel.clone();
         div()
             .id(id)
-            .px(px(6.0))
-            .rounded(px(2.0))
-            .text_size(px(12.0))
+            .px(t.px(6.0))
+            .rounded(t.px(2.0))
+            .text_size(t.px(12.0))
             .text_color(t.fg_muted)
             .cursor_pointer()
             .hover(|s| s.bg(t.bg_hover).text_color(t.fg))
@@ -265,7 +265,7 @@ pub fn actions(panel: &Entity<OutputPanel>, t: &Theme) -> AnyElement {
     };
     div()
         .flex()
-        .gap(px(2.0))
+        .gap(t.px(2.0))
         .child(button("out-run", "▶ Run", |_, cx| cx.emit(OutputEvent::Run)))
         .child(button("out-stop", "■ Stop", |_, cx| cx.emit(OutputEvent::Stop)))
         .child(button("out-copy", "Copy", |p, cx| cx.write_to_clipboard(ClipboardItem::new_string(p.log.text()))))
@@ -298,27 +298,27 @@ impl Render for OutputPanel {
             .flex_col()
             .bg(t.bg)
             .font_family(CODE_FONT)
-            .text_size(px(self.font_size))
+            .text_size(t.px(self.font_size))
             .when(trimmed > 0, |d| {
                 d.child(
                     div()
-                        .px(px(10.0))
-                        .py(px(2.0))
+                        .px(t.px(10.0))
+                        .py(t.px(2.0))
                         .text_color(t.fg_muted)
-                        .text_size(px(11.0))
+                        .text_size(t.px(11.0))
                         .child(format!("… {trimmed} earlier lines not shown (only the last {MAX_LINES} are kept)")),
                 )
             })
-            .child(div().flex_1().min_h_0().px(px(10.0)).py(px(6.0)).child(list))
+            .child(div().flex_1().min_h_0().px(t.px(10.0)).py(t.px(6.0)).child(list))
             .when(self.running, |d| {
                 d.child(
                     div()
                         .flex()
                         .flex_none()
                         .items_center()
-                        .gap(px(8.0))
-                        .px(px(10.0))
-                        .py(px(4.0))
+                        .gap(t.px(8.0))
+                        .px(t.px(10.0))
+                        .py(t.px(4.0))
                         .border_t_1()
                         .border_color(t.border)
                         .child(div().text_color(t.fg_muted).child("Input ›"))

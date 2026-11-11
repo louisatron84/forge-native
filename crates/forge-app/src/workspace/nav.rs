@@ -413,7 +413,7 @@ impl Workspace {
 
     /// The active file was edited: the Outline follows (or is asked again when next shown).
     pub(crate) fn outline_edited(&mut self, cx: &mut Context<Self>) {
-        if self.tasks.is_shown("outline") {
+        if self.panel_is_shown("outline") {
             self.outline_task = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(Duration::from_millis(500)).await;
                 this.update(cx, |ws, cx| ws.refresh_outline(cx)).ok();
@@ -425,7 +425,7 @@ impl Workspace {
 
     /// Another file became active (or the language server started).
     pub(crate) fn outline_file_changed(&mut self, cx: &mut Context<Self>) {
-        if self.tasks.is_shown("outline") {
+        if self.panel_is_shown("outline") {
             self.refresh_outline(cx);
         } else {
             self.outline_for = None;

@@ -8,7 +8,7 @@ use forge_sys::search::{search_project, SearchLimits, SearchResult};
 use forge_text::find::FindOptions;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::{
-    div, prelude::FluentBuilder, px, AnyElement, App, AppContext, Context, Entity, EventEmitter, Focusable, FontWeight,
+    div, prelude::FluentBuilder, AnyElement, App, AppContext, Context, Entity, EventEmitter, Focusable, FontWeight,
     HighlightStyle, InteractiveElement, IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement,
     Styled, StyledText, Subscription, Task, Window,
 };
@@ -188,12 +188,12 @@ impl SearchPanel {
     ) -> AnyElement {
         div()
             .id(id)
-            .px(px(5.0))
-            .h(px(22.0))
+            .px(t.px(5.0))
+            .h(t.px(22.0))
             .flex()
             .items_center()
-            .rounded(px(2.0))
-            .text_size(px(12.0))
+            .rounded(t.px(2.0))
+            .text_size(t.px(12.0))
             .cursor_pointer()
             .when(on, |d| d.bg(t.bg_active).text_color(t.heat_2))
             .when(!on, |d| d.text_color(t.fg_muted).hover(|s| s.bg(t.bg_hover)))
@@ -210,9 +210,9 @@ impl Render for SearchPanel {
             .flex()
             .flex_none()
             .items_center()
-            .gap(px(4.0))
-            .px(px(8.0))
-            .py(px(6.0))
+            .gap(t.px(4.0))
+            .px(t.px(8.0))
+            .py(t.px(6.0))
             .child(
                 div()
                     .flex_1()
@@ -222,7 +222,7 @@ impl Render for SearchPanel {
                     } else {
                         t.line_strong
                     })
-                    .child(Input::new(&self.input).appearance(false).cleanable(false).h(px(24.0))),
+                    .child(Input::new(&self.input).appearance(false).cleanable(false).h(t.px(24.0))),
             )
             .child(self.toggle_button("search-case", "Aa", self.opts.case_sensitive, FindOption::Case, &t, cx))
             .child(self.toggle_button("search-word", "ab", self.opts.whole_word, FindOption::Word, &t, cx))
@@ -241,9 +241,9 @@ impl Render for SearchPanel {
                         .id(("search-file", fi))
                         .flex()
                         .items_center()
-                        .gap(px(6.0))
-                        .px(px(8.0))
-                        .py(px(2.0))
+                        .gap(t.px(6.0))
+                        .px(t.px(8.0))
+                        .py(t.px(2.0))
                         .cursor_pointer()
                         .hover(|s| s.bg(t.bg_hover))
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -252,7 +252,7 @@ impl Render for SearchPanel {
                             }
                             cx.notify();
                         }))
-                        .child(div().w(px(10.0)).text_color(t.fg_muted).child(if collapsed { "▸" } else { "▾" }))
+                        .child(div().w(t.px(10.0)).text_color(t.fg_muted).child(if collapsed { "▸" } else { "▾" }))
                         .child(div().font_weight(FontWeight::MEDIUM).child(name))
                         .child(
                             div()
@@ -261,11 +261,11 @@ impl Render for SearchPanel {
                                 .overflow_hidden()
                                 .text_ellipsis()
                                 .whitespace_nowrap()
-                                .text_size(px(11.0))
+                                .text_size(t.px(11.0))
                                 .text_color(t.fg_muted)
                                 .child(dir),
                         )
-                        .child(div().text_size(px(11.0)).text_color(t.fg_muted).child(file.matches.len().to_string()))
+                        .child(div().text_size(t.px(11.0)).text_color(t.fg_muted).child(file.matches.len().to_string()))
                         .into_any_element(),
                 );
                 if collapsed {
@@ -284,10 +284,10 @@ impl Render for SearchPanel {
                         div()
                             .id(SharedString::from(format!("search-match-{fi}-{mi}")))
                             .flex()
-                            .gap(px(8.0))
-                            .pl(px(24.0))
-                            .pr(px(8.0))
-                            .py(px(1.0))
+                            .gap(t.px(8.0))
+                            .pl(t.px(24.0))
+                            .pr(t.px(8.0))
+                            .py(t.px(1.0))
                             .whitespace_nowrap()
                             .overflow_hidden()
                             .cursor_pointer()
@@ -297,8 +297,8 @@ impl Render for SearchPanel {
                             }))
                             .child(
                                 div()
-                                    .min_w(px(28.0))
-                                    .text_size(px(11.0))
+                                    .min_w(t.px(28.0))
+                                    .text_size(t.px(11.0))
                                     .text_color(t.fg_muted)
                                     .child((m.line + 1).to_string()),
                             )
@@ -312,15 +312,15 @@ impl Render for SearchPanel {
             .size_full()
             .flex()
             .flex_col()
-            .text_size(px(13.0))
+            .text_size(t.px(13.0))
             .text_color(t.fg)
             .child(bar)
             .when(!self.status.is_empty(), |d| {
                 d.child(
                     div()
-                        .px(px(10.0))
-                        .pb(px(4.0))
-                        .text_size(px(12.0))
+                        .px(t.px(10.0))
+                        .pb(t.px(4.0))
+                        .text_size(t.px(12.0))
                         .text_color(t.fg_muted)
                         .child(self.status.clone()),
                 )

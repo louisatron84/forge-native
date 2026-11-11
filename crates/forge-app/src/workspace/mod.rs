@@ -7,12 +7,19 @@ mod assist;
 mod chrome;
 mod code_tools;
 mod commands;
+mod connect;
+mod connect_sync;
 mod debug;
 mod dock;
 mod editors;
+mod floating;
 mod git;
+mod graph;
 mod lsp;
 mod nav;
+mod openapi;
+mod pipeline;
+mod pipeline_author;
 mod pyenv;
 mod run;
 #[cfg(test)]
@@ -96,6 +103,9 @@ pub struct Workspace {
     pub(crate) root: Option<PathBuf>,
     pub(crate) tasks: Tasks,
     pub(crate) editing_layout: bool,
+    floating: HashMap<&'static str, gpui_kit::AnyWindowHandle>,
+    dock_motion: dock::DockMotion,
+    suggestion_file: Option<chrome::SuggestionFile>,
     pub(crate) tabs: Tabs,
     pub(crate) docs: HashMap<DocId, Entity<Document>>,
     next_doc: DocId,
@@ -106,6 +116,17 @@ pub struct Workspace {
     pub(crate) git_panel: Entity<crate::panels::git::GitPanel>,
     pub(crate) git_inspect: Entity<crate::panels::git_inspect::GitInspect>,
     pub(crate) git: git::GitState,
+    graph: graph::GraphState,
+    pub(crate) project_graph: Entity<crate::panels::graph::GraphPanel>,
+    pub(crate) network: Entity<crate::panels::network::NetworkPanel>,
+    pub(crate) pipeline: Entity<crate::panels::pipeline::PipelinePanel>,
+    pipeline_state: pipeline::PipelineState,
+    pub(crate) connect: Entity<crate::panels::connect::ConnectPanel>,
+    pub(crate) openapi: Entity<crate::panels::openapi::OpenApiPanel>,
+    box_content: Entity<crate::panels::openapi::BoxContent>,
+    openapi_state: openapi::OpenApiState,
+    toolbox: Entity<crate::panels::connect::Toolbox>,
+    connect_state: connect::ConnectState,
     pub(crate) debug: debug::DebugState,
     pub(crate) debug_panel: Entity<crate::panels::debug::DebugPanel>,
     update_poll: Option<Task<()>>,
@@ -191,6 +212,13 @@ impl Workspace {
         let editors = [cx.new(EditorView::new), cx.new(EditorView::new)];
         let file_tree = cx.new(FileTree::new);
         let git_panel = cx.new(|cx| crate::panels::git::GitPanel::new(window, cx));
+        let project_graph = cx.new(|cx| crate::panels::graph::GraphPanel::new(window, cx));
+        let network = cx.new(|cx| crate::panels::network::NetworkPanel::new(window, cx));
+        let pipeline = cx.new(|_| crate::panels::pipeline::PipelinePanel::new());
+        let connect = cx.new(|cx| crate::panels::connect::ConnectPanel::new(window, cx));
+        let openapi = cx.new(|cx| crate::panels::openapi::OpenApiPanel::new(window, cx));
+        let box_content = cx.new(|cx| crate::panels::openapi::BoxContent::new(connect.clone(), openapi.clone(), cx));
+        let toolbox = cx.new(|cx| crate::panels::connect::Toolbox::new(connect.clone(), cx));
         let git_inspect = cx.new(|_| crate::panels::git_inspect::GitInspect::default());
         let debug_panel = cx.new(|cx| crate::panels::debug::DebugPanel::new(window, cx));
         let palette = cx.new(|cx| Palette::new(window, cx));
@@ -205,13 +233,53 @@ impl Workspace {
         let outline = cx.new(|_| OutlinePanel::new());
         let calls = cx.new(|_| CallsPanel::new());
         let mut subs = Vec::new();
+        subs.push(
+            cx.subscribe_in(&pipeline, window, |ws, _, event, window, cx| ws.on_pipeline_event(event, window, cx)),
+        );
+        subs.push(cx.subscribe_in(
+            &network,
+            window,
+            |ws, _, event: &crate::panels::network::NetworkEvent, window, cx| {
+                let crate::panels::network::NetworkEvent::OpenFunc(func) = event;
+                let module = forge_core::profile::module_of(func);
+                let graph = &ws.project_graph.read(cx).graph;
+                let location = graph.modules.iter().find(|m| m.id == module).map(|m| {
+                    (
+                        m.path.clone(),
+                        m.symbols.iter().find(|s| s.id == *func).map(|s| s.line.saturating_sub(1)).unwrap_or(0),
+                    )
+                });
+                if let Some(root) = ws.root.clone() {
+                    let (file, line) = location.unwrap_or_else(|| {
+                        let stem = module.replace('.', "/");
+                        let normal = format!("{stem}.py");
+                        (if root.join(&normal).is_file() { normal } else { format!("{stem}/__init__.py") }, 0)
+                    });
+                    let Ok(path) = forge_sys::connect::project_path(&root, &file) else { return };
+                    ws.open_path_at(path, Some(line), window, cx);
+                    ws.reveal_panel("editor", cx);
+                    ws.focus_editor(window, cx);
+                }
+            },
+        ));
+        subs.push(cx.subscribe_in(
+            &openapi,
+            window,
+            |this, _, event: &crate::panels::openapi::OpenApiEvent, window, cx| {
+                this.on_openapi_event(event, window, cx)
+            },
+        ));
         for (i, ed) in editors.iter().enumerate() {
             subs.push(cx.subscribe_in(ed, window, move |this, _, event: &EditorEvent, window, cx| {
                 this.on_editor_event(i, event, window, cx)
             }));
         }
         subs.push(cx.subscribe_in(&file_tree, window, Self::on_tree_event));
+        subs.push(cx.subscribe_in(&connect, window, |ws, _, event, window, cx| ws.on_connect_event(event, window, cx)));
         subs.push(cx.subscribe_in(&git_panel, window, Self::on_git_event));
+        subs.push(
+            cx.subscribe_in(&project_graph, window, |ws, _, event, window, cx| ws.on_graph_event(event, window, cx)),
+        );
         subs.push(cx.subscribe_in(&debug_panel, window, Self::on_debug_event));
         subs.push(cx.subscribe_in(&git_inspect, window, Self::on_git_inspect));
         subs.push(cx.observe_window_activation(window, |this, window, cx| {
@@ -268,6 +336,24 @@ impl Workspace {
         window.on_window_should_close(cx, move |window, cx| {
             me2.upgrade().is_none_or(|ws| ws.update(cx, |ws, cx| ws.should_close(window, cx)))
         });
+        let owner = cx.entity().downgrade();
+        subs.push(cx.on_window_closed(move |cx, id| {
+            let owner = owner.clone();
+            // Removing an owned floating window can happen inside a workspace
+            // update (e.g. during close). Run after that borrow has ended.
+            cx.defer(move |cx| {
+                owner
+                    .update(cx, |ws, cx| {
+                        let before = ws.floating.len();
+                        ws.floating.retain(|_, handle| handle.window_id() != id);
+                        if before != ws.floating.len() {
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+            });
+        }));
+        subs.push(cx.on_release(|ws, cx| ws.close_floating(cx)));
         let st = app_state::state(cx);
         let saved = normalize_layouts(&st.user.layouts());
         let recent = st.user.recent();
@@ -278,6 +364,9 @@ impl Workspace {
             root: None,
             tasks: Tasks::new(&saved),
             editing_layout: false,
+            floating: HashMap::new(),
+            dock_motion: dock::DockMotion::default(),
+            suggestion_file: None,
             tabs: Tabs::default(),
             docs: HashMap::new(),
             next_doc: 1,
@@ -287,6 +376,17 @@ impl Workspace {
             git_panel,
             git_inspect,
             git: git::GitState::default(),
+            graph: graph::GraphState::default(),
+            project_graph,
+            network,
+            pipeline,
+            pipeline_state: pipeline::PipelineState::default(),
+            connect,
+            openapi,
+            box_content,
+            openapi_state: openapi::OpenApiState::default(),
+            toolbox,
+            connect_state: connect::ConnectState::default(),
             debug: debug::DebugState::default(),
             debug_panel,
             update_poll: None,
@@ -565,7 +665,7 @@ impl Workspace {
                 if group == self.tabs.active_group {
                     self.update_occurrences(cx);
                     self.update_lightbulb(cx);
-                    if self.tasks.is_shown("outline") {
+                    if self.panel_is_shown("outline") {
                         self.highlight_outline(cx);
                     }
                 }
@@ -603,6 +703,7 @@ impl Workspace {
             FileTreeEvent::NewProject => self.run_command("file.newFolder", window, cx),
             FileTreeEvent::Open(path) => self.open_path(path.clone(), window, cx),
             FileTreeEvent::Created { path, is_dir } => {
+                self.queue_graph_scan(None, cx);
                 if !is_dir {
                     self.open_path(path.clone(), window, cx);
                 }
@@ -726,12 +827,15 @@ impl Workspace {
         }
         let _ = app_state::state(cx).user.add_recent(&path_str);
         self.root = Some(folder.clone());
+        self.load_boxes(&folder, window, cx);
+        self.reset_graph(cx);
         self.reset_git();
         self.git_panel.update(cx, |p, cx| p.set_folder(true, cx));
         self.git_inspect.update(cx, |p, _| p.open = false);
         self.refresh_git(cx);
         self.load_project_settings(&folder, window, cx);
         self.run.config = None;
+        self.run.last_failed = false;
         self.run.last_task = None;
         self.load_run_file(&folder, window, cx);
         self.python_path_seen = Some(self.effective_settings(cx).python_path);
@@ -907,6 +1011,8 @@ impl Workspace {
         self.next_doc += 1;
         let sub = cx.subscribe(&doc, |this, doc, e: &DocumentEvent, cx| {
             if let DocumentEvent::Edited { changes, .. } = e {
+                this.run.last_failed = false;
+                this.pipeline.update(cx, |p, cx| p.invalidate_data(cx));
                 let path = doc.read(cx).doc.path().to_owned();
                 let previous = this.debug.breakpoints.saved.clone();
                 for change in changes {
@@ -916,6 +1022,8 @@ impl Workspace {
                     this.breakpoints_changed(&path, cx);
                 }
                 this.lsp_doc_changed(&path, cx);
+                this.queue_graph_scan(Some(&path), cx);
+                this.queue_pipeline(cx);
             }
             this.backup_soon(cx);
             cx.notify();
@@ -1036,6 +1144,7 @@ impl Workspace {
             });
         }
         self.refresh_debug_markers(cx);
+        self.queue_pipeline(cx);
     }
 
     fn update_title(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1086,6 +1195,7 @@ impl Workspace {
 
     /// A file was saved: reload what it configures.
     fn after_save(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.queue_graph_scan(Some(path), cx);
         self.refresh_git(cx);
         self.lsp_did_save(path, cx);
         if let (Some(p), Some(root)) = (self.project_settings_path.clone(), self.root.clone()) {
@@ -1188,6 +1298,7 @@ impl Workspace {
         let dirty: Vec<DocId> = self.tabs.docs().into_iter().filter(|d| self.is_dirty(*d, cx)).collect();
         if dirty.is_empty() || self.closing {
             self.stop_debug(cx);
+            self.close_floating(cx);
             return true;
         }
         let names: Vec<String> =
@@ -1212,6 +1323,7 @@ impl Workspace {
                 };
                 if close {
                     ws.stop_debug(cx);
+                    ws.close_floating(cx);
                     ws.closing = true;
                     // Thrown-away changes don't need their crash backups.
                     for id in &dirty {
@@ -1232,6 +1344,7 @@ impl Workspace {
 
     /// A file or folder was renamed on disk: point the affected tabs at the new paths.
     fn path_renamed(&mut self, old: &Path, new: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        self.queue_graph_scan(None, cx);
         let old_breakpoint_paths: Vec<String> = self
             .debug
             .breakpoints
@@ -1287,6 +1400,7 @@ impl Workspace {
                     return ws.alert(format!("Couldn't delete {}:\n{err}", path.display()), window, cx);
                 }
                 let p = path.to_string_lossy().into_owned();
+                ws.queue_graph_scan(None, cx);
                 let gone: Vec<DocId> =
                     ws.docs.iter().filter(|(_, d)| is_inside(d.read(cx).doc.path(), &p)).map(|(id, _)| *id).collect();
                 for id in &gone {
@@ -1508,6 +1622,23 @@ impl Workspace {
 
     /// The view of a panel (created the first time it's shown).
     pub(crate) fn panel_view(&mut self, id: &'static str, cx: &mut Context<Self>) -> AnyView {
+        if id == "toolbox" {
+            return self.toolbox.clone().into();
+        }
+        if id == "box" {
+            return self.box_content.clone().into();
+        }
+        if id == "graph" {
+            self.ensure_graph(cx);
+            return self.project_graph.clone().into();
+        }
+        if id == "network" {
+            return self.network.clone().into();
+        }
+        if id == "pipeline" {
+            self.ensure_pipeline(cx);
+            return self.pipeline.clone().into();
+        }
         if id == "debug" {
             return self.debug_panel.clone().into();
         }

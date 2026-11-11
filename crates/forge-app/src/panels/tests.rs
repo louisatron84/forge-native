@@ -14,7 +14,7 @@ use forge_core::testing::{
 use forge_run::tests::{discover_tests, has_pytest, TestRun, TestRunResult};
 use futures::StreamExt;
 use gpui_kit::{
-    div, prelude::FluentBuilder, px, AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    div, prelude::FluentBuilder, AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, Render, ScrollHandle, SharedString, StatefulInteractiveElement,
     Styled, Task, Window,
 };
@@ -415,7 +415,7 @@ impl TestsPanel {
         div()
             .id(id)
             .ml_auto()
-            .px(px(6.0))
+            .px(t.px(6.0))
             .text_color(t.fg_muted)
             .cursor_pointer()
             .hover(|s| s.text_color(t.heat_2))
@@ -446,20 +446,20 @@ impl TestsPanel {
             .id(("tests-file", fi))
             .flex()
             .items_center()
-            .gap(px(6.0))
-            .px(px(8.0))
-            .py(px(3.0))
+            .gap(t.px(6.0))
+            .px(t.px(8.0))
+            .py(t.px(3.0))
             .cursor_pointer()
             .hover(|s| s.bg(t.bg_hover))
             .on_click(cx.listener(move |_, _, _, cx| cx.emit(TestsEvent::Open(path.clone(), line0))))
             .child(
                 div()
-                    .w(px(14.0))
+                    .w(t.px(14.0))
                     .text_color(Self::status_color(t, file_status, running))
                     .child(icon(file_status, running)),
             )
             .child(div().font_weight(gpui_kit::FontWeight::MEDIUM).child(f.rel.clone()))
-            .child(div().text_size(px(11.0)).text_color(t.fg_muted).child(f.tests.len().to_string()))
+            .child(div().text_size(t.px(11.0)).text_color(t.fg_muted).child(f.tests.len().to_string()))
             .child(self.run_button(
                 SharedString::from(format!("tests-run-file-{fi}")),
                 t,
@@ -488,21 +488,21 @@ impl TestsPanel {
                     .id(SharedString::from(format!("tests-row-{fi}-{ti}")))
                     .flex()
                     .items_center()
-                    .gap(px(6.0))
-                    .pl(px(24.0))
-                    .pr(px(8.0))
-                    .py(px(2.0))
+                    .gap(t.px(6.0))
+                    .pl(t.px(24.0))
+                    .pr(t.px(8.0))
+                    .py(t.px(2.0))
                     .cursor_pointer()
                     .hover(|s| s.bg(t.bg_hover))
                     .on_click(cx.listener(move |_, _, _, cx| cx.emit(TestsEvent::Open(path.clone(), line))))
                     .child(
                         div()
-                            .w(px(14.0))
+                            .w(t.px(14.0))
                             .text_color(Self::status_color(t, status, running))
                             .child(icon(status, running)),
                     )
                     .child(label)
-                    .when_some(time, |d, time| d.child(div().text_size(px(11.0)).text_color(t.fg_muted).child(time)))
+                    .when_some(time, |d, time| d.child(div().text_size(t.px(11.0)).text_color(t.fg_muted).child(time)))
                     .child(self.run_button(
                         SharedString::from(format!("tests-run-{fi}-{ti}")),
                         t,
@@ -534,11 +534,11 @@ impl TestsPanel {
                 div()
                     .id(SharedString::from(format!("tests-msg-{fi}-{ti}")))
                     .flex()
-                    .gap(px(6.0))
-                    .pl(px(44.0))
-                    .pr(px(8.0))
-                    .py(px(1.0))
-                    .text_size(px(12.0))
+                    .gap(t.px(6.0))
+                    .pl(t.px(44.0))
+                    .pr(t.px(8.0))
+                    .py(t.px(1.0))
+                    .text_size(t.px(12.0))
                     .text_color(if r.status == TestStatus::Skipped { t.fg_muted } else { t.err })
                     .cursor_pointer()
                     .on_click(cx.listener(move |_, _, _, cx| cx.emit(TestsEvent::Open(path.clone(), go))))
@@ -562,13 +562,13 @@ impl TestsPanel {
             if open && !r.details.is_empty() {
                 out.push(
                     div()
-                        .ml(px(44.0))
-                        .mr(px(8.0))
-                        .my(px(2.0))
-                        .p(px(6.0))
+                        .ml(t.px(44.0))
+                        .mr(t.px(8.0))
+                        .my(t.px(2.0))
+                        .p(t.px(6.0))
                         .bg(t.bg_panel)
                         .font_family(CODE_FONT)
-                        .text_size(px(12.0))
+                        .text_size(t.px(12.0))
                         .children(r.details.lines().map(|l| div().whitespace_nowrap().child(l.replace('\t', "    "))))
                         .into_any_element(),
                 );
@@ -584,9 +584,9 @@ pub fn actions(panel: &Entity<TestsPanel>, t: &Theme) -> AnyElement {
         let panel = panel.clone();
         div()
             .id(id)
-            .px(px(6.0))
-            .rounded(px(2.0))
-            .text_size(px(12.0))
+            .px(t.px(6.0))
+            .rounded(t.px(2.0))
+            .text_size(t.px(12.0))
             .text_color(t.fg_muted)
             .cursor_pointer()
             .hover(|s| s.bg(t.bg_hover).text_color(t.fg))
@@ -595,7 +595,7 @@ pub fn actions(panel: &Entity<TestsPanel>, t: &Theme) -> AnyElement {
     };
     div()
         .flex()
-        .gap(px(2.0))
+        .gap(t.px(2.0))
         .child(button("tests-all", "▶ All", |_, cx| cx.emit(TestsEvent::Run(Which::All))))
         .child(button("tests-failed", "▶ Failed", |_, cx| cx.emit(TestsEvent::Run(Which::Failed))))
         .child(button("tests-rediscover", "⟳", |p, cx| p.discover(cx)))
@@ -621,25 +621,25 @@ impl Render for TestsPanel {
         let body: Vec<AnyElement> = if self.show_log {
             vec![div()
                 .font_family(CODE_FONT)
-                .text_size(px(12.0))
-                .px(px(8.0))
+                .text_size(t.px(12.0))
+                .px(t.px(8.0))
                 .children(self.log.lines().map(|l| div().whitespace_nowrap().child(l.replace('\t', "    "))))
                 .into_any_element()]
         } else if self.root.is_none() {
-            vec![div().p(px(10.0)).text_color(t.fg_muted).child("Open a folder to see its tests.").into_any_element()]
+            vec![div().p(t.px(10.0)).text_color(t.fg_muted).child("Open a folder to see its tests.").into_any_element()]
         } else if self.pytest_missing {
             vec![div()
                 .flex()
                 .items_center()
-                .gap(px(8.0))
-                .p(px(10.0))
+                .gap(t.px(8.0))
+                .p(t.px(10.0))
                 .text_color(t.fg_muted)
                 .child("These tests need pytest, which isn't installed in this interpreter.")
                 .child(
                     div()
                         .id("tests-install-pytest")
-                        .px(px(8.0))
-                        .py(px(2.0))
+                        .px(t.px(8.0))
+                        .py(t.px(2.0))
                         .border_1()
                         .border_color(t.border)
                         .text_color(t.fg)
@@ -655,7 +655,7 @@ impl Render for TestsPanel {
             } else {
                 "Looking for tests…"
             };
-            vec![div().p(px(10.0)).text_color(t.fg_muted).child(text).into_any_element()]
+            vec![div().p(t.px(10.0)).text_color(t.fg_muted).child(text).into_any_element()]
         } else {
             let files = self.files.clone();
             files.iter().enumerate().flat_map(|(i, f)| self.render_file(i, f, &t, cx)).collect()
@@ -666,18 +666,18 @@ impl Render for TestsPanel {
             .size_full()
             .flex()
             .flex_col()
-            .text_size(px(13.0))
+            .text_size(t.px(13.0))
             .text_color(t.fg)
             .when(!summary.is_empty(), |d| {
                 d.child(
                     div()
                         .flex_none()
-                        .px(px(10.0))
-                        .py(px(4.0))
+                        .px(t.px(10.0))
+                        .py(t.px(4.0))
                         .border_b_1()
                         .border_color(t.border)
                         .text_color(t.fg_muted)
-                        .text_size(px(12.0))
+                        .text_size(t.px(12.0))
                         .child(summary),
                 )
             })
@@ -688,7 +688,7 @@ impl Render for TestsPanel {
                     .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
-                    .py(px(4.0))
+                    .py(t.px(4.0))
                     .children(body),
             )
     }

@@ -3,8 +3,8 @@
 use crate::theme::ForgeTheme;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::{
-    div, px, AnyElement, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement, ParentElement,
-    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window,
+    div, AnyElement, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement, ParentElement, Render,
+    SharedString, StatefulInteractiveElement, Styled, Subscription, Window,
 };
 
 #[derive(Clone)]
@@ -84,8 +84,8 @@ impl DebugPanel {
         let t = cx.global::<ForgeTheme>().0.clone();
         div()
             .id(id.into())
-            .px(px(8.0))
-            .py(px(2.0))
+            .px(t.px(8.0))
+            .py(t.px(2.0))
             .cursor_pointer()
             .hover(|s| s.bg(t.bg_hover))
             .child(label)
@@ -99,7 +99,13 @@ impl Render for DebugPanel {
         let t = cx.global::<ForgeTheme>().0.clone();
         let mut rows: Vec<AnyElement> = Vec::new();
         let header = |title: &str| {
-            div().px(px(8.0)).pt(px(10.0)).pb(px(4.0)).text_color(t.fg_muted).child(title.to_owned()).into_any_element()
+            div()
+                .px(t.px(8.0))
+                .pt(t.px(10.0))
+                .pb(t.px(4.0))
+                .text_color(t.fg_muted)
+                .child(title.to_owned())
+                .into_any_element()
         };
         rows.push(header(&self.status));
         for (id, name) in &self.sessions {
@@ -160,7 +166,7 @@ impl Render for DebugPanel {
         }
         rows.push(header("Debug console"));
         for line in self.console.iter().rev().take(200).collect::<Vec<_>>().into_iter().rev() {
-            rows.push(div().px(px(8.0)).font_family(crate::theme::CODE_FONT).child(line.clone()).into_any_element());
+            rows.push(div().px(t.px(8.0)).font_family(crate::theme::CODE_FONT).child(line.clone()).into_any_element());
         }
         let controls = [
             ("Start", "debug.start"),
@@ -178,8 +184,8 @@ impl Render for DebugPanel {
             .flex()
             .flex_col()
             .text_color(t.fg)
-            .text_size(px(12.0))
-            .child(div().flex().flex_wrap().gap(px(4.0)).children(controls.into_iter().map(|(label, command)| {
+            .text_size(t.px(12.0))
+            .child(div().flex().flex_wrap().gap(t.px(4.0)).children(controls.into_iter().map(|(label, command)| {
                 self.row(format!("debug-control-{command}"), label.into(), DebugEvent::Command(command), cx)
             })))
             .child(div().id("debug-body").flex_1().min_h_0().overflow_y_scroll().children(rows))

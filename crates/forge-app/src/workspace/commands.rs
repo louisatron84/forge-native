@@ -72,6 +72,7 @@ impl Workspace {
             | "view.database"
             | "view.projectGraph"
             | "connect.addApiBox"
+            | "api.addOpenApi"
             | "search.project"
             | "python.selectInterpreter"
             | "python.createVenv"
@@ -365,6 +366,8 @@ impl Workspace {
             "panel.network" => self.reveal_panel("network", cx),
             "tests.show" => self.reveal_panel("tests", cx),
             "view.projectGraph" => self.reveal_panel("graph", cx),
+            "connect.addApiBox" => self.on_connect_event(&crate::panels::connect::ConnectEvent::Add, window, cx),
+            "api.addOpenApi" => self.on_connect_event(&crate::panels::connect::ConnectEvent::OpenApi, window, cx),
             "view.pipeline" => self.reveal_panel("pipeline", cx),
             "view.database" => self.reveal_panel("database", cx),
             "terminal.toggle" => {
@@ -476,6 +479,9 @@ impl Workspace {
     }
 
     pub(crate) fn reveal_panel(&mut self, panel: &str, cx: &mut Context<Self>) {
+        if self.focus_floating(panel, cx) {
+            return;
+        }
         self.tasks.reveal(panel);
         self.layouts_changed(cx);
         cx.notify();

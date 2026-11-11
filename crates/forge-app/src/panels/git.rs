@@ -9,7 +9,7 @@ use forge_core::git::{ChangeKind, FileChange, RepoStatus};
 use forge_sys::git::SyncAction;
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::{
-    div, prelude::FluentBuilder, px, AnyElement, AppContext, Context, Entity, EventEmitter, FontWeight, Hsla,
+    div, prelude::FluentBuilder, AnyElement, AppContext, Context, Entity, EventEmitter, FontWeight, Hsla,
     InteractiveElement, IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled,
     Subscription, Window,
 };
@@ -57,6 +57,7 @@ pub struct GitPanel {
     has_folder: bool,
     loaded: bool,
     repo: Option<Repo>,
+    change_count: usize,
     busy: String,
     message: Entity<TextareaState>,
     amend: bool,
@@ -79,11 +80,23 @@ impl GitPanel {
             InputEvent::Change => cx.notify(),
             _ => {}
         });
-        Self { has_folder: false, loaded: false, repo: None, busy: String::new(), message, amend: false, _sub: sub }
+        Self {
+            has_folder: false,
+            loaded: false,
+            repo: None,
+            change_count: 0,
+            busy: String::new(),
+            message,
+            amend: false,
+            _sub: sub,
+        }
     }
 
     pub fn repo(&self) -> Option<&Repo> {
         self.repo.as_ref()
+    }
+    pub fn change_count(&self) -> usize {
+        self.change_count
     }
 
     /// A folder was opened or closed (the status follows).
@@ -92,11 +105,22 @@ impl GitPanel {
         self.has_folder = has_folder;
         self.loaded = false;
         self.repo = None;
+        self.change_count = 0;
         cx.notify();
     }
 
     pub fn set_status(&mut self, repo: Option<Repo>, cx: &mut Context<Self>) {
         if !self.loaded || repo != self.repo {
+            self.change_count = repo.as_ref().map_or(0, |r| {
+                r.status
+                    .staged
+                    .iter()
+                    .chain(&r.status.unstaged)
+                    .chain(&r.status.conflicts)
+                    .map(|c| &c.path)
+                    .collect::<std::collections::HashSet<_>>()
+                    .len()
+            });
             self.repo = repo;
             self.loaded = true;
             cx.notify();
@@ -159,17 +183,17 @@ impl GitPanel {
         let mut head = div()
             .flex()
             .items_center()
-            .gap(px(6.0))
-            .px(px(8.0))
-            .pt(px(8.0))
-            .pb(px(2.0))
-            .text_size(px(11.0))
+            .gap(t.px(6.0))
+            .px(t.px(8.0))
+            .pt(t.px(8.0))
+            .pb(t.px(2.0))
+            .text_size(t.px(11.0))
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(t.fg_muted)
             .child(title.to_uppercase())
-            .child(div().px(px(5.0)).rounded(px(6.0)).bg(t.shade_strong).child(list.len().to_string()));
+            .child(div().px(t.px(5.0)).rounded(t.px(6.0)).bg(t.shade_strong).child(list.len().to_string()));
         if !list.is_empty() {
-            let mut buttons = div().ml_auto().flex().gap(px(2.0));
+            let mut buttons = div().ml_auto().flex().gap(t.px(2.0));
             for (i, (label, tip, event)) in actions.into_iter().enumerate() {
                 let event = std::cell::RefCell::new(Some(event));
                 buttons =
@@ -205,7 +229,7 @@ impl GitPanel {
         let group = SharedString::from(format!("git-row-{section}-{i}"));
         let abs = repo.abs(&change.path);
         let c = change.clone();
-        let mut buttons = div().flex().gap(px(2.0)).opacity(0.0).group_hover(group.clone(), |s| s.opacity(1.0));
+        let mut buttons = div().flex().gap(t.px(2.0)).opacity(0.0).group_hover(group.clone(), |s| s.opacity(1.0));
         let bid = |what: &str| SharedString::from(format!("git-{section}-{i}-{what}"));
         if change.kind != ChangeKind::Deleted {
             let abs = abs.clone();
@@ -244,10 +268,10 @@ impl GitPanel {
             .group(group)
             .flex()
             .items_center()
-            .gap(px(6.0))
-            .h(px(22.0))
-            .pl(px(14.0))
-            .pr(px(8.0))
+            .gap(t.px(6.0))
+            .h(t.px(22.0))
+            .pl(t.px(14.0))
+            .pr(t.px(8.0))
             .whitespace_nowrap()
             .cursor_pointer()
             .hover(|s| s.bg(t.bg_hover))
@@ -265,18 +289,18 @@ impl GitPanel {
                     .min_w_0()
                     .overflow_hidden()
                     .text_ellipsis()
-                    .text_size(px(11.0))
+                    .text_size(t.px(11.0))
                     .text_color(t.fg_muted)
                     .child(dir),
             )
             .child(buttons)
             .child(
                 div()
-                    .w(px(12.0))
+                    .w(t.px(12.0))
                     .flex_none()
                     .text_center()
                     .font_family(crate::theme::CODE_FONT)
-                    .text_size(px(11.0))
+                    .text_size(t.px(11.0))
                     .font_weight(FontWeight::BOLD)
                     .text_color(kind_color(t, change.kind))
                     .child(change.kind.letter()),
@@ -288,12 +312,12 @@ impl GitPanel {
 fn button(id: impl Into<SharedString>, label: impl Into<SharedString>, t: &Theme) -> gpui_kit::Stateful<gpui_kit::Div> {
     div()
         .id(id.into())
-        .px(px(8.0))
-        .py(px(2.0))
+        .px(t.px(8.0))
+        .py(t.px(2.0))
         .border_1()
         .border_color(t.border)
-        .rounded(px(2.0))
-        .text_size(px(12.0))
+        .rounded(t.px(2.0))
+        .text_size(t.px(12.0))
         .cursor_pointer()
         .hover(|s| s.bg(t.bg_hover))
         .child(label.into())
@@ -308,9 +332,9 @@ fn mini_button(
     let _ = tip;
     div()
         .id(id)
-        .px(px(4.0))
-        .rounded(px(2.0))
-        .text_size(px(12.0))
+        .px(t.px(4.0))
+        .rounded(t.px(2.0))
+        .text_size(t.px(12.0))
         .text_color(t.fg_muted)
         .cursor_pointer()
         .hover(|s| s.bg(t.bg_active).text_color(t.fg))
@@ -318,14 +342,14 @@ fn mini_button(
 }
 
 fn note(t: &Theme, text: impl Into<SharedString>) -> gpui_kit::Div {
-    div().px(px(10.0)).py(px(8.0)).text_color(t.fg_muted).child(text.into())
+    div().px(t.px(10.0)).py(t.px(8.0)).text_color(t.fg_muted).child(text.into())
 }
 
 impl Render for GitPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.global::<ForgeTheme>().0.clone();
         let root =
-            div().id("git-panel").size_full().overflow_y_scroll().text_size(px(13.0)).text_color(t.fg).pb(px(8.0));
+            div().id("git-panel").size_full().overflow_y_scroll().text_size(t.px(13.0)).text_color(t.fg).pb(t.px(8.0));
         if !self.has_folder {
             return root.child(note(&t, "Open a folder to use git."));
         }
@@ -335,7 +359,7 @@ impl Render for GitPanel {
         let Some(repo) = self.repo.clone() else {
             return root.child(
                 note(&t, "This folder isn't a git repository.").child(
-                    div().pt(px(8.0)).child(
+                    div().pt(t.px(8.0)).child(
                         button("git-init", "Initialize Repository", &t)
                             .bg(t.accent)
                             .text_color(t.on_heat)
@@ -356,20 +380,20 @@ impl Render for GitPanel {
             .flex()
             .flex_wrap()
             .items_center()
-            .gap(px(4.0))
-            .px(px(8.0))
-            .pt(px(8.0))
+            .gap(t.px(4.0))
+            .px(t.px(8.0))
+            .pt(t.px(8.0))
             .child(
                 div()
                     .id("git-branch")
                     .flex_1()
-                    .min_w(px(80.0))
+                    .min_w(t.px(80.0))
                     .overflow_hidden()
                     .text_ellipsis()
                     .whitespace_nowrap()
-                    .px(px(6.0))
-                    .py(px(2.0))
-                    .rounded(px(2.0))
+                    .px(t.px(6.0))
+                    .py(t.px(2.0))
+                    .rounded(t.px(2.0))
                     .font_weight(FontWeight::MEDIUM)
                     .cursor_pointer()
                     .hover(|s| s.bg(t.bg_hover))
@@ -397,15 +421,15 @@ impl Render for GitPanel {
         let commit_box = div()
             .flex()
             .flex_col()
-            .gap(px(4.0))
-            .px(px(8.0))
-            .pt(px(6.0))
+            .gap(t.px(4.0))
+            .px(t.px(8.0))
+            .pt(t.px(6.0))
             .child(
                 div()
-                    .h(px(64.0))
+                    .h(t.px(64.0))
                     .border_1()
                     .border_color(t.border)
-                    .rounded(px(2.0))
+                    .rounded(t.px(2.0))
                     .bg(t.bg)
                     .child(Textarea::new(&self.message).appearance(false).h_full()),
             )
@@ -413,7 +437,7 @@ impl Render for GitPanel {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(10.0))
+                    .gap(t.px(10.0))
                     .child(
                         button("git-commit", if amend { "Amend Commit" } else { "Commit" }, &t)
                             .when(can_commit, |d| d.bg(t.accent).text_color(t.on_heat).border_color(t.accent))
@@ -425,8 +449,8 @@ impl Render for GitPanel {
                             .id("git-amend")
                             .flex()
                             .items_center()
-                            .gap(px(4.0))
-                            .text_size(px(12.0))
+                            .gap(t.px(4.0))
+                            .text_size(t.px(12.0))
                             .text_color(if initial { t.fg_muted } else { t.fg })
                             .when(!initial, |d| d.cursor_pointer())
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -532,5 +556,27 @@ mod tests {
             p.commit(cx);
         });
         assert_eq!(events.get(), 0);
+    }
+
+    #[gpui_kit::test]
+    fn suggestion_change_count_is_the_union_of_changed_paths_and_clears_on_folder_change(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_global(ForgeTheme(std::sync::Arc::new(Theme::molten())));
+        });
+        let (panel, cx) = cx.add_window_view(GitPanel::new);
+        panel.update(cx, |p, cx| {
+            let file = FileChange { path: "a.py".into(), from: None, kind: ChangeKind::Modified };
+            p.set_status(
+                Some(Repo {
+                    root: "/p".into(),
+                    status: RepoStatus { staged: vec![file.clone()], unstaged: vec![file], ..Default::default() },
+                }),
+                cx,
+            );
+            assert_eq!(p.change_count(), 1);
+            p.set_folder(true, cx);
+            assert_eq!(p.change_count(), 0);
+        });
     }
 }

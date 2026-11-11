@@ -5,12 +5,13 @@ use crate::theme::{ForgeTheme, CODE_FONT};
 use forge_core::git::{hunk_patch, parse_diff, LineKind};
 use forge_core::history::{graph_layout, Commit, GraphRow};
 use gpui_kit::{
-    canvas, div, point, px, uniform_list, AnyElement, Context, EventEmitter, InteractiveElement, IntoElement,
+    canvas, div, point, uniform_list, AnyElement, Context, EventEmitter, InteractiveElement, IntoElement,
     ParentElement, PathBuilder, Render, StatefulInteractiveElement, Styled, Window,
 };
 
 #[derive(Clone)]
 pub enum InspectEvent {
+    Action(&'static str),
     Close,
     Patch { patch: String, cached: bool, reverse: bool },
     Commit(String),
@@ -28,6 +29,7 @@ struct Row {
 
 #[derive(Default)]
 pub struct GitInspect {
+    pub action: Option<(&'static str, &'static str)>,
     graph_columns: usize,
     pub open: bool,
     pub title: String,
@@ -37,7 +39,12 @@ pub struct GitInspect {
 impl EventEmitter<InspectEvent> for GitInspect {}
 
 impl GitInspect {
+    #[cfg(test)]
+    pub(crate) fn contains_text(&self, text: &str) -> bool {
+        self.rows.iter().any(|row| row.text.contains(text))
+    }
     pub fn text(&mut self, title: String, lines: Vec<String>, cx: &mut Context<Self>) {
+        self.action = None;
         self.title = title;
         self.open = true;
         self.graph_columns = 0;
@@ -144,23 +151,25 @@ impl GitInspect {
         };
         let mut el = div()
             .id(("git-inspect-row", index))
-            .h(px(23.0))
+            .h(t.px(23.0))
             .flex()
             .items_center()
-            .gap(px(12.0))
-            .px(px(10.0))
+            .gap(t.px(12.0))
+            .px(t.px(10.0))
             .text_color(color);
         if let Some(graph) = row.graph.clone() {
+            let paint_theme = t.clone();
             let colors = [t.accent, t.git_added, t.git_modified, t.warn];
             el = el.child(
                 canvas(
                     |_, _, _| (),
                     move |bounds, _, window, _| {
+                        let t = &paint_theme;
                         let p = |column: usize, y: f32| {
-                            point(bounds.origin.x + px(column as f32 * 14.0 + 7.0), bounds.origin.y + px(y))
+                            point(bounds.origin.x + t.px(column as f32 * 14.0 + 7.0), bounds.origin.y + t.px(y))
                         };
                         let mut line = |from, to, color| {
-                            let mut builder = PathBuilder::stroke(px(1.5));
+                            let mut builder = PathBuilder::stroke(t.px(1.5));
                             builder.move_to(from);
                             builder.line_to(to);
                             if let Ok(path) = builder.build() {
@@ -185,7 +194,8 @@ impl GitInspect {
                         let mut dot = PathBuilder::fill();
                         for i in 0..12 {
                             let angle = i as f32 * std::f32::consts::TAU / 12.0;
-                            let position = point(center.x + px(angle.cos() * 3.5), center.y + px(angle.sin() * 3.5));
+                            let position =
+                                point(center.x + t.px(angle.cos() * 3.5), center.y + t.px(angle.sin() * 3.5));
                             if i == 0 {
                                 dot.move_to(position);
                             } else {
@@ -198,7 +208,7 @@ impl GitInspect {
                         }
                     },
                 )
-                .w(px(self.graph_columns as f32 * 14.0 + 8.0))
+                .w(t.px(self.graph_columns as f32 * 14.0 + 8.0))
                 .h_full()
                 .flex_none(),
             );
@@ -239,12 +249,21 @@ impl Render for GitInspect {
             .child(
                 div()
                     .flex()
-                    .gap(px(12.0))
-                    .px(px(10.0))
-                    .py(px(6.0))
+                    .gap(t.px(12.0))
+                    .px(t.px(10.0))
+                    .py(t.px(6.0))
                     .border_b_1()
                     .border_color(t.border)
                     .child(self.title.clone())
+                    .children(self.action.map(|(id, label)| {
+                        div()
+                            .id("inspect-action")
+                            .debug_selector(|| "apply-generated-code".into())
+                            .cursor_pointer()
+                            .text_color(t.heat_2)
+                            .child(label)
+                            .on_click(cx.listener(move |_, _, _, cx| cx.emit(InspectEvent::Action(id))))
+                    }))
                     .child(
                         div()
                             .id("close-git-inspect")
@@ -263,7 +282,7 @@ impl Render for GitInspect {
                 .flex_1()
                 .min_h_0()
                 .font_family(CODE_FONT)
-                .text_size(px(12.0)),
+                .text_size(t.px(12.0)),
             )
     }
 }

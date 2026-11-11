@@ -591,6 +591,20 @@ pub struct Tasks {
     before_debug: Option<TaskId>,
     /// Something changed that should be saved (the owner saves, debounced).
     pub dirty: bool,
+    transition: Option<Transition>,
+}
+
+/// Transient presentation event; never part of the saved layout format.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Transition {
+    pub revision: u64,
+    pub kind: TransitionKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransitionKind {
+    Task,
+    Layout,
 }
 
 impl Tasks {
@@ -599,7 +613,7 @@ impl Tasks {
             .iter()
             .map(|t| ((*t).to_owned(), saved.get(*t).cloned().unwrap_or_else(|| default_arrangement(t))))
             .collect();
-        Self { arrangements, task: "code", before_debug: None, dirty: false }
+        Self { arrangements, task: "code", before_debug: None, dirty: false, transition: None }
     }
 
     pub fn current(&self) -> TaskId {
@@ -620,7 +634,26 @@ impl Tasks {
 
     pub fn switch_to(&mut self, task: &str) {
         if let Some(t) = TASKS.iter().find(|t| **t == task) {
-            self.task = t;
+            if self.task != *t {
+                self.task = t;
+                self.animate(TransitionKind::Task);
+            }
+        }
+    }
+
+    pub fn transition(&self) -> Option<Transition> {
+        self.transition
+    }
+
+    fn animate(&mut self, kind: TransitionKind) {
+        let revision = self.transition.map_or(1, |t| t.revision.wrapping_add(1));
+        self.transition = Some(Transition { revision, kind });
+    }
+
+    fn update_animated(&mut self, root: DockNode) {
+        if &root != self.root() {
+            self.animate(TransitionKind::Layout);
+            self.update(root);
         }
     }
 
@@ -720,7 +753,7 @@ impl Tasks {
     }
 
     pub fn reset_current(&mut self) {
-        self.update(default_arrangement(self.task));
+        self.update_animated(default_arrangement(self.task));
     }
 
     pub fn close_panel(&mut self, id: &str) {
@@ -728,7 +761,7 @@ impl Tasks {
             return;
         }
         if let Some(next) = remove_panel(self.root(), id) {
-            self.update(next);
+            self.update_animated(next);
         }
     }
 
@@ -738,7 +771,7 @@ impl Tasks {
             return self.reveal(id);
         }
         let next = self.place(&self.root().clone(), id);
-        self.update(next);
+        self.update_animated(next);
     }
 
     /// Panels the current task doesn't place.
@@ -751,7 +784,7 @@ impl Tasks {
     pub fn drop_panel(&mut self, panel: &str, target_stack_id: &str, zone: Zone) {
         let next = move_panel(self.root(), panel, target_stack_id, zone);
         if &next != self.root() {
-            self.update(next);
+            self.update_animated(next);
         }
     }
 
@@ -776,6 +809,34 @@ impl Tasks {
 mod tests {
     use super::*;
     use DockNode as N;
+
+    #[test]
+    fn task_and_structural_changes_animate_but_tab_clicks_and_resizes_do_not() {
+        let mut tasks = Tasks::new(&SavedLayouts::new());
+        assert!(tasks.transition().is_none());
+        tasks.switch_to("connect");
+        let task = tasks.transition().unwrap();
+        assert_eq!(task.kind, TransitionKind::Task);
+        tasks.switch_to("connect");
+        assert_eq!(tasks.transition(), Some(task));
+        tasks.close_panel("toolbox");
+        let layout = tasks.transition().unwrap();
+        assert_eq!(layout.kind, TransitionKind::Layout);
+        assert!(layout.revision > task.revision);
+        tasks.changed(activate(tasks.root(), "files"));
+        assert_eq!(tasks.transition(), Some(layout));
+        let root = tasks.root().clone();
+        tasks.changed(resize(&root, root.id(), &[0.3, 0.7]));
+        assert_eq!(tasks.transition(), Some(layout));
+        tasks.add_panel("toolbox");
+        assert!(tasks.transition().unwrap().revision > layout.revision);
+        let added = tasks.transition();
+        tasks.add_panel("toolbox");
+        tasks.close_panel("editor");
+        assert_eq!(tasks.transition(), added);
+        tasks.reset_current();
+        assert_eq!(tasks.transition().unwrap().kind, TransitionKind::Layout);
+    }
 
     /// row [ stack s1 (files, git) | column [ stack s2 (editor) | stack s3 (terminal, problems) ] ]
     fn tree() -> DockNode {

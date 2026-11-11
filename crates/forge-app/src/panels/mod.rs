@@ -1,19 +1,24 @@
 //! The panels the dock arranges (Files, Search, Terminal...): their titles,
 //! and a stand-in for panels not ported to the native app yet.
 
+pub mod connect;
 pub mod debug;
 pub mod files;
 pub mod git;
 pub mod git_inspect;
+pub mod graph;
 pub mod lsp_views;
+pub mod network;
+pub mod openapi;
 pub mod output;
+pub mod pipeline;
 pub mod problems;
 pub mod search;
 pub mod terminal;
 pub mod tests;
 
 use crate::theme::ForgeTheme;
-use gpui_kit::{div, px, Context, IntoElement, ParentElement, Render, SharedString, Styled, Window};
+use gpui_kit::{div, Context, IntoElement, ParentElement, Render, SharedString, Styled, Window};
 
 /// The title shown on a panel's tab.
 pub fn title(id: &str) -> &'static str {
@@ -58,7 +63,7 @@ impl Render for Placeholder {
             .items_center()
             .justify_center()
             .text_color(t.fg_muted)
-            .text_size(px(12.0))
+            .text_size(t.px(12.0))
             .child(format!("{} is being ported to the native app.", self.title))
     }
 }

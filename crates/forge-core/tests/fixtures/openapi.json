@@ -1,0 +1,1151 @@
+[
+  {
+    "doc": {
+      "openapi": "3.0.3",
+      "info": {
+        "title": "Petstore API",
+        "version": "1.2.0",
+        "description": "Pets.\nMore."
+      },
+      "servers": [
+        {
+          "url": "https://{region}.pets.example.com/v1/",
+          "variables": {
+            "region": {
+              "default": "eu"
+            }
+          }
+        }
+      ],
+      "components": {
+        "securitySchemes": {
+          "token": {
+            "type": "http",
+            "scheme": "bearer"
+          },
+          "key": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-Api-Key"
+          }
+        },
+        "schemas": {
+          "Owner": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "Pet": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "description": "A pet.",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "tag": {
+                "type": "string",
+                "description": "Free text"
+              },
+              "owner": {
+                "$ref": "#/components/schemas/Owner"
+              },
+              "photo-urls": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "class": {
+                "type": "string"
+              }
+            }
+          },
+          "NewPet": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Owner"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "petName"
+                ],
+                "properties": {
+                  "petName": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          "Pets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Pet"
+            }
+          }
+        },
+        "parameters": {
+          "Limit": {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      "paths": {
+        "/pets": {
+          "get": {
+            "operationId": "listPets",
+            "summary": "List pets",
+            "tags": [
+              "pets"
+            ],
+            "parameters": [
+              {
+                "$ref": "#/components/parameters/Limit"
+              }
+            ],
+            "responses": {
+              "200": {
+                "description": "ok",
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/Pets"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "post": {
+            "operationId": "createPet",
+            "tags": [
+              "pets"
+            ],
+            "requestBody": {
+              "required": true,
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/NewPet"
+                  }
+                }
+              }
+            },
+            "responses": {
+              "201": {
+                "description": "made",
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/Pet"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "/pets/{petId}": {
+          "parameters": [
+            {
+              "name": "petId",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "get": {
+            "operationId": "showPetById",
+            "parameters": [
+              {
+                "name": "X-Trace",
+                "in": "header",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            ],
+            "responses": {
+              "200": {
+                "description": "ok",
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/Pet"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "delete": {
+            "responses": {
+              "204": {
+                "description": "gone"
+              }
+            }
+          }
+        }
+      }
+    },
+    "from": "",
+    "spec": {
+      "title": "Petstore API",
+      "version": "1.2.0",
+      "description": "Pets.",
+      "baseUrl": "https://eu.pets.example.com/v1",
+      "slug": "petstore",
+      "envPrefix": "PETSTORE",
+      "auth": [
+        {
+          "kind": "bearer",
+          "env": "PETSTORE_TOKEN"
+        },
+        {
+          "kind": "apiKey",
+          "in": "header",
+          "name": "X-Api-Key",
+          "env": "PETSTORE_API_KEY"
+        }
+      ],
+      "operations": [
+        {
+          "id": "list_pets",
+          "method": "GET",
+          "path": "/pets",
+          "summary": "List pets",
+          "tag": "pets",
+          "params": [
+            {
+              "name": "limit",
+              "py": "limit",
+              "in": "query",
+              "required": false,
+              "type": {
+                "kind": "int"
+              },
+              "description": ""
+            }
+          ],
+          "body": null,
+          "response": {
+            "kind": "list",
+            "of": {
+              "kind": "model",
+              "name": "Pet"
+            }
+          }
+        },
+        {
+          "id": "create_pet",
+          "method": "POST",
+          "path": "/pets",
+          "summary": "",
+          "tag": "pets",
+          "params": [],
+          "body": {
+            "type": {
+              "kind": "model",
+              "name": "NewPet"
+            },
+            "required": true,
+            "form": false
+          },
+          "response": {
+            "kind": "model",
+            "name": "Pet"
+          }
+        },
+        {
+          "id": "show_pet_by_id",
+          "method": "GET",
+          "path": "/pets/{petId}",
+          "summary": "",
+          "tag": "other",
+          "params": [
+            {
+              "name": "petId",
+              "py": "pet_id",
+              "in": "path",
+              "required": true,
+              "type": {
+                "kind": "str"
+              },
+              "description": ""
+            },
+            {
+              "name": "X-Trace",
+              "py": "x_trace",
+              "in": "header",
+              "required": false,
+              "type": {
+                "kind": "str"
+              },
+              "description": ""
+            }
+          ],
+          "body": null,
+          "response": {
+            "kind": "model",
+            "name": "Pet"
+          }
+        },
+        {
+          "id": "delete_pets_by",
+          "method": "DELETE",
+          "path": "/pets/{petId}",
+          "summary": "",
+          "tag": "other",
+          "params": [
+            {
+              "name": "petId",
+              "py": "pet_id",
+              "in": "path",
+              "required": true,
+              "type": {
+                "kind": "str"
+              },
+              "description": ""
+            }
+          ],
+          "body": null,
+          "response": null
+        }
+      ],
+      "models": [
+        {
+          "name": "Owner",
+          "description": "",
+          "fields": [
+            {
+              "name": "name",
+              "py": "name",
+              "type": {
+                "kind": "str"
+              },
+              "required": false,
+              "description": ""
+            }
+          ]
+        },
+        {
+          "name": "Pet",
+          "description": "A pet.",
+          "fields": [
+            {
+              "name": "id",
+              "py": "id",
+              "type": {
+                "kind": "int"
+              },
+              "required": true,
+              "description": ""
+            },
+            {
+              "name": "name",
+              "py": "name",
+              "type": {
+                "kind": "str"
+              },
+              "required": true,
+              "description": ""
+            },
+            {
+              "name": "tag",
+              "py": "tag",
+              "type": {
+                "kind": "str"
+              },
+              "required": false,
+              "description": "Free text"
+            },
+            {
+              "name": "owner",
+              "py": "owner",
+              "type": {
+                "kind": "model",
+                "name": "Owner"
+              },
+              "required": false,
+              "description": ""
+            },
+            {
+              "name": "photo-urls",
+              "py": "photo_urls",
+              "type": {
+                "kind": "list",
+                "of": {
+                  "kind": "str"
+                }
+              },
+              "required": false,
+              "description": ""
+            },
+            {
+              "name": "class",
+              "py": "class_",
+              "type": {
+                "kind": "str"
+              },
+              "required": false,
+              "description": ""
+            }
+          ]
+        },
+        {
+          "name": "NewPet",
+          "description": "",
+          "fields": [
+            {
+              "name": "name",
+              "py": "name",
+              "type": {
+                "kind": "str"
+              },
+              "required": false,
+              "description": ""
+            },
+            {
+              "name": "petName",
+              "py": "pet_name",
+              "type": {
+                "kind": "str"
+              },
+              "required": true,
+              "description": ""
+            }
+          ]
+        }
+      ],
+      "warnings": []
+    },
+    "code": "# forge:openapi petstore 3b48cc94\n\"\"\"\nClient for Petstore API 1.2.0, generated by Forge from its OpenAPI description.\n\nSettings come from the environment (Forge loads .env): PETSTORE_BASE_URL and the credentials below.\nIt is ordinary Python: edit it freely. Forge notices edits and asks before regenerating over them.\n\"\"\"\nfrom __future__ import annotations\n\nimport base64\nimport json\nimport os\nimport urllib.parse\nimport urllib.request\nfrom dataclasses import dataclass\nfrom typing import Any, Optional\n\nBASE_URL = os.environ.get(\"PETSTORE_BASE_URL\", \"https://eu.pets.example.com/v1\")\n\n\ndef _auth(headers: dict, query: dict) -> None:\n    \"\"\"Add the credentials from the environment (or .env), when they are set.\"\"\"\n    token = os.environ.get(\"PETSTORE_TOKEN\")\n    if token:\n        headers[\"Authorization\"] = \"Bearer \" + token\n    key = os.environ.get(\"PETSTORE_API_KEY\")\n    if key:\n        headers[\"X-Api-Key\"] = key\n\n\ndef _plain(value: Any) -> Any:\n    \"\"\"Models and lists of them as plain JSON values.\"\"\"\n    if hasattr(value, \"to_dict\"):\n        return value.to_dict()\n    if isinstance(value, list):\n        return [_plain(v) for v in value]\n    if isinstance(value, dict):\n        return {k: _plain(v) for k, v in value.items()}\n    return value\n\n\ndef _path(template: str, values: dict) -> str:\n    return template.format_map({k: urllib.parse.quote(str(v), safe=\"\") for k, v in values.items()})\n\n\ndef _request(method: str, path: str, params: Optional[dict] = None, headers: Optional[dict] = None, body: Any = None, form: bool = False) -> Any:\n    query = {k: v for k, v in (params or {}).items() if v is not None}\n    sent = {\"Accept\": \"application/json\"}\n    sent.update({k: str(v) for k, v in (headers or {}).items() if v is not None})\n    _auth(sent, query)\n    url = BASE_URL.rstrip(\"/\") + path\n    if query:\n        url += \"?\" + urllib.parse.urlencode(query, doseq=True)\n    data = None\n    if body is not None:\n        if form:\n            data = urllib.parse.urlencode(_plain(body), doseq=True).encode(\"utf-8\")\n            sent[\"Content-Type\"] = \"application/x-www-form-urlencoded\"\n        else:\n            data = json.dumps(_plain(body)).encode(\"utf-8\")\n            sent[\"Content-Type\"] = \"application/json\"\n    request = urllib.request.Request(url, data=data, headers=sent, method=method)\n    with urllib.request.urlopen(request, timeout=30) as response:\n        raw = response.read()\n    if not raw:\n        return None\n    try:\n        return json.loads(raw)\n    except ValueError:\n        return raw.decode(\"utf-8\", \"replace\")\n\n\n@dataclass\nclass Owner:\n    \"\"\"The Owner object.\"\"\"\n\n    name: Optional[str] = None\n\n    @classmethod\n    def from_dict(cls, data: dict) -> \"Owner\":\n        return cls(\n            name=data.get(\"name\"),\n        )\n\n    def to_dict(self) -> dict:\n        out = {}\n        if self.name is not None:\n            out[\"name\"] = _plain(self.name)\n        return out\n\n\n@dataclass\nclass Pet:\n    \"\"\"A pet.\"\"\"\n\n    id: int\n    name: str\n    tag: Optional[str] = None  # Free text\n    owner: Optional[Owner] = None\n    photo_urls: Optional[list[str]] = None\n    class_: Optional[str] = None\n\n    @classmethod\n    def from_dict(cls, data: dict) -> \"Pet\":\n        return cls(\n            id=data.get(\"id\"),\n            name=data.get(\"name\"),\n            tag=data.get(\"tag\"),\n            owner=Owner.from_dict(data.get(\"owner\")) if isinstance(data.get(\"owner\"), dict) else data.get(\"owner\"),\n            photo_urls=data.get(\"photo-urls\"),\n            class_=data.get(\"class\"),\n        )\n\n    def to_dict(self) -> dict:\n        out = {}\n        if self.id is not None:\n            out[\"id\"] = _plain(self.id)\n        if self.name is not None:\n            out[\"name\"] = _plain(self.name)\n        if self.tag is not None:\n            out[\"tag\"] = _plain(self.tag)\n        if self.owner is not None:\n            out[\"owner\"] = _plain(self.owner)\n        if self.photo_urls is not None:\n            out[\"photo-urls\"] = _plain(self.photo_urls)\n        if self.class_ is not None:\n            out[\"class\"] = _plain(self.class_)\n        return out\n\n\n@dataclass\nclass NewPet:\n    \"\"\"The NewPet object.\"\"\"\n\n    pet_name: str\n    name: Optional[str] = None\n\n    @classmethod\n    def from_dict(cls, data: dict) -> \"NewPet\":\n        return cls(\n            pet_name=data.get(\"petName\"),\n            name=data.get(\"name\"),\n        )\n\n    def to_dict(self) -> dict:\n        out = {}\n        if self.pet_name is not None:\n            out[\"petName\"] = _plain(self.pet_name)\n        if self.name is not None:\n            out[\"name\"] = _plain(self.name)\n        return out\n\n\ndef list_pets(limit: Optional[int] = None) -> list[Pet]:\n    \"\"\"GET /pets: List pets\"\"\"\n    data = _request(\"GET\", \"/pets\", params={\"limit\": limit})\n    return [Pet.from_dict(x) if isinstance(x, dict) else x for x in (data or [])]\n\n\ndef create_pet(body: NewPet) -> Pet:\n    \"\"\"POST /pets\"\"\"\n    data = _request(\"POST\", \"/pets\", body=body)\n    return Pet.from_dict(data) if isinstance(data, dict) else data\n\n\ndef show_pet_by_id(pet_id: str, x_trace: Optional[str] = None) -> Pet:\n    \"\"\"GET /pets/{petId}\"\"\"\n    data = _request(\"GET\", _path(\"/pets/{petId}\", {\"petId\": pet_id}), headers={\"X-Trace\": x_trace})\n    return Pet.from_dict(data) if isinstance(data, dict) else data\n\n\ndef delete_pets_by(pet_id: str) -> Any:\n    \"\"\"DELETE /pets/{petId}\"\"\"\n    data = _request(\"DELETE\", _path(\"/pets/{petId}\", {\"petId\": pet_id}))\n    return data\n",
+    "only": [
+      "delete_pets_by"
+    ],
+    "subset": "# forge:openapi petstore 697f8687\n\"\"\"\nClient for Petstore API 1.2.0, generated by Forge from its OpenAPI description.\n\nSettings come from the environment (Forge loads .env): PETSTORE_BASE_URL and the credentials below.\nIt is ordinary Python: edit it freely. Forge notices edits and asks before regenerating over them.\n\"\"\"\nfrom __future__ import annotations\n\nimport base64\nimport json\nimport os\nimport urllib.parse\nimport urllib.request\nfrom dataclasses import dataclass\nfrom typing import Any, Optional\n\nBASE_URL = os.environ.get(\"PETSTORE_BASE_URL\", \"https://eu.pets.example.com/v1\")\n\n\ndef _auth(headers: dict, query: dict) -> None:\n    \"\"\"Add the credentials from the environment (or .env), when they are set.\"\"\"\n    token = os.environ.get(\"PETSTORE_TOKEN\")\n    if token:\n        headers[\"Authorization\"] = \"Bearer \" + token\n    key = os.environ.get(\"PETSTORE_API_KEY\")\n    if key:\n        headers[\"X-Api-Key\"] = key\n\n\ndef _plain(value: Any) -> Any:\n    \"\"\"Models and lists of them as plain JSON values.\"\"\"\n    if hasattr(value, \"to_dict\"):\n        return value.to_dict()\n    if isinstance(value, list):\n        return [_plain(v) for v in value]\n    if isinstance(value, dict):\n        return {k: _plain(v) for k, v in value.items()}\n    return value\n\n\ndef _path(template: str, values: dict) -> str:\n    return template.format_map({k: urllib.parse.quote(str(v), safe=\"\") for k, v in values.items()})\n\n\ndef _request(method: str, path: str, params: Optional[dict] = None, headers: Optional[dict] = None, body: Any = None, form: bool = False) -> Any:\n    query = {k: v for k, v in (params or {}).items() if v is not None}\n    sent = {\"Accept\": \"application/json\"}\n    sent.update({k: str(v) for k, v in (headers or {}).items() if v is not None})\n    _auth(sent, query)\n    url = BASE_URL.rstrip(\"/\") + path\n    if query:\n        url += \"?\" + urllib.parse.urlencode(query, doseq=True)\n    data = None\n    if body is not None:\n        if form:\n            data = urllib.parse.urlencode(_plain(body), doseq=True).encode(\"utf-8\")\n            sent[\"Content-Type\"] = \"application/x-www-form-urlencoded\"\n        else:\n            data = json.dumps(_plain(body)).encode(\"utf-8\")\n            sent[\"Content-Type\"] = \"application/json\"\n    request = urllib.request.Request(url, data=data, headers=sent, method=method)\n    with urllib.request.urlopen(request, timeout=30) as response:\n        raw = response.read()\n    if not raw:\n        return None\n    try:\n        return json.loads(raw)\n    except ValueError:\n        return raw.decode(\"utf-8\", \"replace\")\n\n\ndef delete_pets_by(pet_id: str) -> Any:\n    \"\"\"DELETE /pets/{petId}\"\"\"\n    data = _request(\"DELETE\", _path(\"/pets/{petId}\", {\"petId\": pet_id}))\n    return data\n"
+  },
+  {
+    "doc": {
+      "swagger": "2.0",
+      "info": {
+        "title": "Old Shop",
+        "version": "1"
+      },
+      "host": "shop.example.com",
+      "basePath": "/api",
+      "schemes": [
+        "http",
+        "https"
+      ],
+      "securityDefinitions": {
+        "basic": {
+          "type": "basic"
+        },
+        "key": {
+          "type": "apiKey",
+          "in": "query",
+          "name": "api_key"
+        }
+      },
+      "definitions": {
+        "Item": {
+          "type": "object",
+          "required": [
+            "sku"
+          ],
+          "properties": {
+            "sku": {
+              "type": "string"
+            },
+            "price": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      "paths": {
+        "/items": {
+          "post": {
+            "operationId": "addItem",
+            "parameters": [
+              {
+                "name": "item",
+                "in": "body",
+                "required": true,
+                "schema": {
+                  "$ref": "#/definitions/Item"
+                }
+              }
+            ],
+            "responses": {
+              "200": {
+                "description": "ok",
+                "schema": {
+                  "$ref": "#/definitions/Item"
+                }
+              }
+            }
+          }
+        },
+        "/login": {
+          "post": {
+            "operationId": "login",
+            "parameters": [
+              {
+                "name": "user",
+                "in": "formData",
+                "type": "string"
+              },
+              {
+                "name": "pass",
+                "in": "formData",
+                "type": "string"
+              }
+            ],
+            "responses": {
+              "200": {
+                "description": "ok"
+              }
+            }
+          }
+        }
+      }
+    },
+    "from": "",
+    "spec": {
+      "title": "Old Shop",
+      "version": "1",
+      "description": "",
+      "baseUrl": "https://shop.example.com/api",
+      "slug": "old_shop",
+      "envPrefix": "OLD_SHOP",
+      "auth": [
+        {
+          "kind": "basic",
+          "userEnv": "OLD_SHOP_USERNAME",
+          "passEnv": "OLD_SHOP_PASSWORD"
+        },
+        {
+          "kind": "apiKey",
+          "in": "query",
+          "name": "api_key",
+          "env": "OLD_SHOP_API_KEY"
+        }
+      ],
+      "operations": [
+        {
+          "id": "add_item",
+          "method": "POST",
+          "path": "/items",
+          "summary": "",
+          "tag": "other",
+          "params": [],
+          "body": {
+            "type": {
+              "kind": "model",
+              "name": "Item"
+            },
+            "required": true,
+            "form": false
+          },
+          "response": {
+            "kind": "model",
+            "name": "Item"
+          }
+        },
+        {
+          "id": "login",
+          "method": "POST",
+          "path": "/login",
+          "summary": "",
+          "tag": "other",
+          "params": [],
+          "body": {
+            "type": {
+              "kind": "dict",
+              "of": {
+                "kind": "any"
+              }
+            },
+            "required": true,
+            "form": true
+          },
+          "response": null
+        }
+      ],
+      "models": [
+        {
+          "name": "Item",
+          "description": "",
+          "fields": [
+            {
+              "name": "sku",
+              "py": "sku",
+              "type": {
+                "kind": "str"
+              },
+              "required": true,
+              "description": ""
+            },
+            {
+              "name": "price",
+              "py": "price",
+              "type": {
+                "kind": "float"
+              },
+              "required": false,
+              "description": ""
+            }
+          ]
+        }
+      ],
+      "warnings": []
+    },
+    "code": "# forge:openapi old_shop d6acde2a\n\"\"\"\nClient for Old Shop 1, generated by Forge from its OpenAPI description.\n\nSettings come from the environment (Forge loads .env): OLD_SHOP_BASE_URL and the credentials below.\nIt is ordinary Python: edit it freely. Forge notices edits and asks before regenerating over them.\n\"\"\"\nfrom __future__ import annotations\n\nimport base64\nimport json\nimport os\nimport urllib.parse\nimport urllib.request\nfrom dataclasses import dataclass\nfrom typing import Any, Optional\n\nBASE_URL = os.environ.get(\"OLD_SHOP_BASE_URL\", \"https://shop.example.com/api\")\n\n\ndef _auth(headers: dict, query: dict) -> None:\n    \"\"\"Add the credentials from the environment (or .env), when they are set.\"\"\"\n    user = os.environ.get(\"OLD_SHOP_USERNAME\")\n    if user:\n        pair = (user + \":\" + os.environ.get(\"OLD_SHOP_PASSWORD\", \"\")).encode(\"utf-8\")\n        headers[\"Authorization\"] = \"Basic \" + base64.b64encode(pair).decode(\"ascii\")\n    key = os.environ.get(\"OLD_SHOP_API_KEY\")\n    if key:\n        query[\"api_key\"] = key\n\n\ndef _plain(value: Any) -> Any:\n    \"\"\"Models and lists of them as plain JSON values.\"\"\"\n    if hasattr(value, \"to_dict\"):\n        return value.to_dict()\n    if isinstance(value, list):\n        return [_plain(v) for v in value]\n    if isinstance(value, dict):\n        return {k: _plain(v) for k, v in value.items()}\n    return value\n\n\ndef _path(template: str, values: dict) -> str:\n    return template.format_map({k: urllib.parse.quote(str(v), safe=\"\") for k, v in values.items()})\n\n\ndef _request(method: str, path: str, params: Optional[dict] = None, headers: Optional[dict] = None, body: Any = None, form: bool = False) -> Any:\n    query = {k: v for k, v in (params or {}).items() if v is not None}\n    sent = {\"Accept\": \"application/json\"}\n    sent.update({k: str(v) for k, v in (headers or {}).items() if v is not None})\n    _auth(sent, query)\n    url = BASE_URL.rstrip(\"/\") + path\n    if query:\n        url += \"?\" + urllib.parse.urlencode(query, doseq=True)\n    data = None\n    if body is not None:\n        if form:\n            data = urllib.parse.urlencode(_plain(body), doseq=True).encode(\"utf-8\")\n            sent[\"Content-Type\"] = \"application/x-www-form-urlencoded\"\n        else:\n            data = json.dumps(_plain(body)).encode(\"utf-8\")\n            sent[\"Content-Type\"] = \"application/json\"\n    request = urllib.request.Request(url, data=data, headers=sent, method=method)\n    with urllib.request.urlopen(request, timeout=30) as response:\n        raw = response.read()\n    if not raw:\n        return None\n    try:\n        return json.loads(raw)\n    except ValueError:\n        return raw.decode(\"utf-8\", \"replace\")\n\n\n@dataclass\nclass Item:\n    \"\"\"The Item object.\"\"\"\n\n    sku: str\n    price: Optional[float] = None\n\n    @classmethod\n    def from_dict(cls, data: dict) -> \"Item\":\n        return cls(\n            sku=data.get(\"sku\"),\n            price=data.get(\"price\"),\n        )\n\n    def to_dict(self) -> dict:\n        out = {}\n        if self.sku is not None:\n            out[\"sku\"] = _plain(self.sku)\n        if self.price is not None:\n            out[\"price\"] = _plain(self.price)\n        return out\n\n\ndef add_item(body: Item) -> Item:\n    \"\"\"POST /items\"\"\"\n    data = _request(\"POST\", \"/items\", body=body)\n    return Item.from_dict(data) if isinstance(data, dict) else data\n\n\ndef login(body: dict[str, Any]) -> Any:\n    \"\"\"POST /login\"\"\"\n    data = _request(\"POST\", \"/login\", body=body, form=True)\n    return data\n",
+    "only": [
+      "delete_pets_by"
+    ],
+    "subset": "# forge:openapi old_shop def29cee\n\"\"\"\nClient for Old Shop 1, generated by Forge from its OpenAPI description.\n\nSettings come from the environment (Forge loads .env): OLD_SHOP_BASE_URL and the credentials below.\nIt is ordinary Python: edit it freely. Forge notices edits and asks before regenerating over them.\n\"\"\"\nfrom __future__ import annotations\n\nimport base64\nimport json\nimport os\nimport urllib.parse\nimport urllib.request\nfrom dataclasses import dataclass\nfrom typing import Any, Optional\n\nBASE_URL = os.environ.get(\"OLD_SHOP_BASE_URL\", \"https://shop.example.com/api\")\n\n\ndef _auth(headers: dict, query: dict) -> None:\n    \"\"\"Add the credentials from the environment (or .env), when they are set.\"\"\"\n    user = os.environ.get(\"OLD_SHOP_USERNAME\")\n    if user:\n        pair = (user + \":\" + os.environ.get(\"OLD_SHOP_PASSWORD\", \"\")).encode(\"utf-8\")\n        headers[\"Authorization\"] = \"Basic \" + base64.b64encode(pair).decode(\"ascii\")\n    key = os.environ.get(\"OLD_SHOP_API_KEY\")\n    if key:\n        query[\"api_key\"] = key\n\n\ndef _plain(value: Any) -> Any:\n    \"\"\"Models and lists of them as plain JSON values.\"\"\"\n    if hasattr(value, \"to_dict\"):\n        return value.to_dict()\n    if isinstance(value, list):\n        return [_plain(v) for v in value]\n    if isinstance(value, dict):\n        return {k: _plain(v) for k, v in value.items()}\n    return value\n\n\ndef _path(template: str, values: dict) -> str:\n    return template.format_map({k: urllib.parse.quote(str(v), safe=\"\") for k, v in values.items()})\n\n\ndef _request(method: str, path: str, params: Optional[dict] = None, headers: Optional[dict] = None, body: Any = None, form: bool = False) -> Any:\n    query = {k: v for k, v in (params or {}).items() if v is not None}\n    sent = {\"Accept\": \"application/json\"}\n    sent.update({k: str(v) for k, v in (headers or {}).items() if v is not None})\n    _auth(sent, query)\n    url = BASE_URL.rstrip(\"/\") + path\n    if query:\n        url += \"?\" + urllib.parse.urlencode(query, doseq=True)\n    data = None\n    if body is not None:\n        if form:\n            data = urllib.parse.urlencode(_plain(body), doseq=True).encode(\"utf-8\")\n            sent[\"Content-Type\"] = \"application/x-www-form-urlencoded\"\n        else:\n            data = json.dumps(_plain(body)).encode(\"utf-8\")\n            sent[\"Content-Type\"] = \"application/json\"\n    request = urllib.request.Request(url, data=data, headers=sent, method=method)\n    with urllib.request.urlopen(request, timeout=30) as response:\n        raw = response.read()\n    if not raw:\n        return None\n    try:\n        return json.loads(raw)\n    except ValueError:\n        return raw.decode(\"utf-8\", \"replace\")\n"
+  },
+  {
+    "doc": {
+      "openapi": "3.0.3",
+      "info": {
+        "title": "Petstore API",
+        "version": "1.2.0",
+        "description": "Pets.\nMore."
+      },
+      "servers": [
+        {
+          "url": "/api/v2"
+        }
+      ],
+      "components": {
+        "securitySchemes": {
+          "token": {
+            "type": "http",
+            "scheme": "bearer"
+          },
+          "key": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-Api-Key"
+          }
+        },
+        "schemas": {
+          "Owner": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "Pet": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "description": "A pet.",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "tag": {
+                "type": "string",
+                "description": "Free text"
+              },
+              "owner": {
+                "$ref": "#/components/schemas/Owner"
+              },
+              "photo-urls": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "class": {
+                "type": "string"
+              }
+            }
+          },
+          "NewPet": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Owner"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "petName"
+                ],
+                "properties": {
+                  "petName": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          "Pets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Pet"
+            }
+          }
+        },
+        "parameters": {
+          "Limit": {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      "paths": {
+        "/pets": {
+          "get": {
+            "operationId": "listPets",
+            "summary": "List pets",
+            "tags": [
+              "pets"
+            ],
+            "parameters": [
+              {
+                "$ref": "#/components/parameters/Limit"
+              }
+            ],
+            "responses": {
+              "200": {
+                "description": "ok",
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/Pets"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "post": {
+            "operationId": "createPet",
+            "tags": [
+              "pets"
+            ],
+            "requestBody": {
+              "required": true,
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/NewPet"
+                  }
+                }
+              }
+            },
+            "responses": {
+              "201": {
+                "description": "made",
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/Pet"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "/pets/{petId}": {
+          "parameters": [
+            {
+              "name": "petId",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "get": {
+            "operationId": "showPetById",
+            "parameters": [
+              {
+                "name": "X-Trace",
+                "in": "header",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            ],
+            "responses": {
+              "200": {
+                "description": "ok",
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/Pet"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "delete": {
+            "responses": {
+              "204": {
+                "description": "gone"
+              }
+            }
+          }
+        }
+      }
+    },
+    "from": "https://example.com/docs/openapi.json",
+    "spec": {
+      "title": "Petstore API",
+      "version": "1.2.0",
+      "description": "Pets.",
+      "baseUrl": "https://example.com/api/v2",
+      "slug": "petstore",
+      "envPrefix": "PETSTORE",
+      "auth": [
+        {
+          "kind": "bearer",
+          "env": "PETSTORE_TOKEN"
+        },
+        {
+          "kind": "apiKey",
+          "in": "header",
+          "name": "X-Api-Key",
+          "env": "PETSTORE_API_KEY"
+        }
+      ],
+      "operations": [
+        {
+          "id": "list_pets",
+          "method": "GET",
+          "path": "/pets",
+          "summary": "List pets",
+          "tag": "pets",
+          "params": [
+            {
+              "name": "limit",
+              "py": "limit",
+              "in": "query",
+              "required": false,
+              "type": {
+                "kind": "int"
+              },
+              "description": ""
+            }
+          ],
+          "body": null,
+          "response": {
+            "kind": "list",
+            "of": {
+              "kind": "model",
+              "name": "Pet"
+            }
+          }
+        },
+        {
+          "id": "create_pet",
+          "method": "POST",
+          "path": "/pets",
+          "summary": "",
+          "tag": "pets",
+          "params": [],
+          "body": {
+            "type": {
+              "kind": "model",
+              "name": "NewPet"
+            },
+            "required": true,
+            "form": false
+          },
+          "response": {
+            "kind": "model",
+            "name": "Pet"
+          }
+        },
+        {
+          "id": "show_pet_by_id",
+          "method": "GET",
+          "path": "/pets/{petId}",
+          "summary": "",
+          "tag": "other",
+          "params": [
+            {
+              "name": "petId",
+              "py": "pet_id",
+              "in": "path",
+              "required": true,
+              "type": {
+                "kind": "str"
+              },
+              "description": ""
+            },
+            {
+              "name": "X-Trace",
+              "py": "x_trace",
+              "in": "header",
+              "required": false,
+              "type": {
+                "kind": "str"
+              },
+              "description": ""
+            }
+          ],
+          "body": null,
+          "response": {
+            "kind": "model",
+            "name": "Pet"
+          }
+        },
+        {
+          "id": "delete_pets_by",
+          "method": "DELETE",
+          "path": "/pets/{petId}",
+          "summary": "",
+          "tag": "other",
+          "params": [
+            {
+              "name": "petId",
+              "py": "pet_id",
+              "in": "path",
+              "required": true,
+              "type": {
+                "kind": "str"
+              },
+              "description": ""
+            }
+          ],
+          "body": null,
+          "response": null
+        }
+      ],
+      "models": [
+        {
+          "name": "Owner",
+          "description": "",
+          "fields": [
+            {
+              "name": "name",
+              "py": "name",
+              "type": {
+                "kind": "str"
+              },
+              "required": false,
+              "description": ""
+            }
+          ]
+        },
+        {
+          "name": "Pet",
+          "description": "A pet.",
+          "fields": [
+            {
+              "name": "id",
+              "py": "id",
+              "type": {
+                "kind": "int"
+              },
+              "required": true,
+              "description": ""
+            },
+            {
+              "name": "name",
+              "py": "name",
+              "type": {
+                "kind": "str"
+              },
+              "required": true,
+              "description": ""
+            },
+            {
+              "name": "tag",
+              "py": "tag",
+              "type": {
+                "kind": "str"
+              },
+              "required": false,
+              "description": "Free text"
+            },
+            {
+              "name": "owner",
+              "py": "owner",
+              "type": {
+                "kind": "model",
+                "name": "Owner"
+              },
+              "required": false,
+              "description": ""
+            },
+            {
+              "name": "photo-urls",
+              "py": "photo_urls",
+              "type": {
+                "kind": "list",
+                "of": {
+                  "kind": "str"
+                }
+              },
+              "required": false,
+              "description": ""
+            },
+            {
+              "name": "class",
+              "py": "class_",
+              "type": {
+                "kind": "str"
+              },
+              "required": false,
+              "description": ""
+            }
+          ]
+        },
+        {
+          "name": "NewPet",
+          "description": "",
+          "fields": [
+            {
+              "name": "name",
+              "py": "name",
+              "type": {
+                "kind": "str"
+              },
+              "required": false,
+              "description": ""
+            },
+            {
+              "name": "petName",
+              "py": "pet_name",
+              "type": {
+                "kind": "str"
+              },
+              "required": true,
+              "description": ""
+            }
+          ]
+        }
+      ],
+      "warnings": []
+    },
+    "code": "# forge:openapi petstore 1fb00dd0\n\"\"\"\nClient for Petstore API 1.2.0, generated by Forge from its OpenAPI description.\n\nSettings come from the environment (Forge loads .env): PETSTORE_BASE_URL and the credentials below.\nIt is ordinary Python: edit it freely. Forge notices edits and asks before regenerating over them.\n\"\"\"\nfrom __future__ import annotations\n\nimport base64\nimport json\nimport os\nimport urllib.parse\nimport urllib.request\nfrom dataclasses import dataclass\nfrom typing import Any, Optional\n\nBASE_URL = os.environ.get(\"PETSTORE_BASE_URL\", \"https://example.com/api/v2\")\n\n\ndef _auth(headers: dict, query: dict) -> None:\n    \"\"\"Add the credentials from the environment (or .env), when they are set.\"\"\"\n    token = os.environ.get(\"PETSTORE_TOKEN\")\n    if token:\n        headers[\"Authorization\"] = \"Bearer \" + token\n    key = os.environ.get(\"PETSTORE_API_KEY\")\n    if key:\n        headers[\"X-Api-Key\"] = key\n\n\ndef _plain(value: Any) -> Any:\n    \"\"\"Models and lists of them as plain JSON values.\"\"\"\n    if hasattr(value, \"to_dict\"):\n        return value.to_dict()\n    if isinstance(value, list):\n        return [_plain(v) for v in value]\n    if isinstance(value, dict):\n        return {k: _plain(v) for k, v in value.items()}\n    return value\n\n\ndef _path(template: str, values: dict) -> str:\n    return template.format_map({k: urllib.parse.quote(str(v), safe=\"\") for k, v in values.items()})\n\n\ndef _request(method: str, path: str, params: Optional[dict] = None, headers: Optional[dict] = None, body: Any = None, form: bool = False) -> Any:\n    query = {k: v for k, v in (params or {}).items() if v is not None}\n    sent = {\"Accept\": \"application/json\"}\n    sent.update({k: str(v) for k, v in (headers or {}).items() if v is not None})\n    _auth(sent, query)\n    url = BASE_URL.rstrip(\"/\") + path\n    if query:\n        url += \"?\" + urllib.parse.urlencode(query, doseq=True)\n    data = None\n    if body is not None:\n        if form:\n            data = urllib.parse.urlencode(_plain(body), doseq=True).encode(\"utf-8\")\n            sent[\"Content-Type\"] = \"application/x-www-form-urlencoded\"\n        else:\n            data = json.dumps(_plain(body)).encode(\"utf-8\")\n            sent[\"Content-Type\"] = \"application/json\"\n    request = urllib.request.Request(url, data=data, headers=sent, method=method)\n    with urllib.request.urlopen(request, timeout=30) as response:\n        raw = response.read()\n    if not raw:\n        return None\n    try:\n        return json.loads(raw)\n    except ValueError:\n        return raw.decode(\"utf-8\", \"replace\")\n\n\n@dataclass\nclass Owner:\n    \"\"\"The Owner object.\"\"\"\n\n    name: Optional[str] = None\n\n    @classmethod\n    def from_dict(cls, data: dict) -> \"Owner\":\n        return cls(\n            name=data.get(\"name\"),\n        )\n\n    def to_dict(self) -> dict:\n        out = {}\n        if self.name is not None:\n            out[\"name\"] = _plain(self.name)\n        return out\n\n\n@dataclass\nclass Pet:\n    \"\"\"A pet.\"\"\"\n\n    id: int\n    name: str\n    tag: Optional[str] = None  # Free text\n    owner: Optional[Owner] = None\n    photo_urls: Optional[list[str]] = None\n    class_: Optional[str] = None\n\n    @classmethod\n    def from_dict(cls, data: dict) -> \"Pet\":\n        return cls(\n            id=data.get(\"id\"),\n            name=data.get(\"name\"),\n            tag=data.get(\"tag\"),\n            owner=Owner.from_dict(data.get(\"owner\")) if isinstance(data.get(\"owner\"), dict) else data.get(\"owner\"),\n            photo_urls=data.get(\"photo-urls\"),\n            class_=data.get(\"class\"),\n        )\n\n    def to_dict(self) -> dict:\n        out = {}\n        if self.id is not None:\n            out[\"id\"] = _plain(self.id)\n        if self.name is not None:\n            out[\"name\"] = _plain(self.name)\n        if self.tag is not None:\n            out[\"tag\"] = _plain(self.tag)\n        if self.owner is not None:\n            out[\"owner\"] = _plain(self.owner)\n        if self.photo_urls is not None:\n            out[\"photo-urls\"] = _plain(self.photo_urls)\n        if self.class_ is not None:\n            out[\"class\"] = _plain(self.class_)\n        return out\n\n\n@dataclass\nclass NewPet:\n    \"\"\"The NewPet object.\"\"\"\n\n    pet_name: str\n    name: Optional[str] = None\n\n    @classmethod\n    def from_dict(cls, data: dict) -> \"NewPet\":\n        return cls(\n            pet_name=data.get(\"petName\"),\n            name=data.get(\"name\"),\n        )\n\n    def to_dict(self) -> dict:\n        out = {}\n        if self.pet_name is not None:\n            out[\"petName\"] = _plain(self.pet_name)\n        if self.name is not None:\n            out[\"name\"] = _plain(self.name)\n        return out\n\n\ndef list_pets(limit: Optional[int] = None) -> list[Pet]:\n    \"\"\"GET /pets: List pets\"\"\"\n    data = _request(\"GET\", \"/pets\", params={\"limit\": limit})\n    return [Pet.from_dict(x) if isinstance(x, dict) else x for x in (data or [])]\n\n\ndef create_pet(body: NewPet) -> Pet:\n    \"\"\"POST /pets\"\"\"\n    data = _request(\"POST\", \"/pets\", body=body)\n    return Pet.from_dict(data) if isinstance(data, dict) else data\n\n\ndef show_pet_by_id(pet_id: str, x_trace: Optional[str] = None) -> Pet:\n    \"\"\"GET /pets/{petId}\"\"\"\n    data = _request(\"GET\", _path(\"/pets/{petId}\", {\"petId\": pet_id}), headers={\"X-Trace\": x_trace})\n    return Pet.from_dict(data) if isinstance(data, dict) else data\n\n\ndef delete_pets_by(pet_id: str) -> Any:\n    \"\"\"DELETE /pets/{petId}\"\"\"\n    data = _request(\"DELETE\", _path(\"/pets/{petId}\", {\"petId\": pet_id}))\n    return data\n",
+    "only": [
+      "delete_pets_by"
+    ],
+    "subset": "# forge:openapi petstore 943b7d7b\n\"\"\"\nClient for Petstore API 1.2.0, generated by Forge from its OpenAPI description.\n\nSettings come from the environment (Forge loads .env): PETSTORE_BASE_URL and the credentials below.\nIt is ordinary Python: edit it freely. Forge notices edits and asks before regenerating over them.\n\"\"\"\nfrom __future__ import annotations\n\nimport base64\nimport json\nimport os\nimport urllib.parse\nimport urllib.request\nfrom dataclasses import dataclass\nfrom typing import Any, Optional\n\nBASE_URL = os.environ.get(\"PETSTORE_BASE_URL\", \"https://example.com/api/v2\")\n\n\ndef _auth(headers: dict, query: dict) -> None:\n    \"\"\"Add the credentials from the environment (or .env), when they are set.\"\"\"\n    token = os.environ.get(\"PETSTORE_TOKEN\")\n    if token:\n        headers[\"Authorization\"] = \"Bearer \" + token\n    key = os.environ.get(\"PETSTORE_API_KEY\")\n    if key:\n        headers[\"X-Api-Key\"] = key\n\n\ndef _plain(value: Any) -> Any:\n    \"\"\"Models and lists of them as plain JSON values.\"\"\"\n    if hasattr(value, \"to_dict\"):\n        return value.to_dict()\n    if isinstance(value, list):\n        return [_plain(v) for v in value]\n    if isinstance(value, dict):\n        return {k: _plain(v) for k, v in value.items()}\n    return value\n\n\ndef _path(template: str, values: dict) -> str:\n    return template.format_map({k: urllib.parse.quote(str(v), safe=\"\") for k, v in values.items()})\n\n\ndef _request(method: str, path: str, params: Optional[dict] = None, headers: Optional[dict] = None, body: Any = None, form: bool = False) -> Any:\n    query = {k: v for k, v in (params or {}).items() if v is not None}\n    sent = {\"Accept\": \"application/json\"}\n    sent.update({k: str(v) for k, v in (headers or {}).items() if v is not None})\n    _auth(sent, query)\n    url = BASE_URL.rstrip(\"/\") + path\n    if query:\n        url += \"?\" + urllib.parse.urlencode(query, doseq=True)\n    data = None\n    if body is not None:\n        if form:\n            data = urllib.parse.urlencode(_plain(body), doseq=True).encode(\"utf-8\")\n            sent[\"Content-Type\"] = \"application/x-www-form-urlencoded\"\n        else:\n            data = json.dumps(_plain(body)).encode(\"utf-8\")\n            sent[\"Content-Type\"] = \"application/json\"\n    request = urllib.request.Request(url, data=data, headers=sent, method=method)\n    with urllib.request.urlopen(request, timeout=30) as response:\n        raw = response.read()\n    if not raw:\n        return None\n    try:\n        return json.loads(raw)\n    except ValueError:\n        return raw.decode(\"utf-8\", \"replace\")\n\n\ndef delete_pets_by(pet_id: str) -> Any:\n    \"\"\"DELETE /pets/{petId}\"\"\"\n    data = _request(\"DELETE\", _path(\"/pets/{petId}\", {\"petId\": pet_id}))\n    return data\n"
+  },
+  {
+    "doc": {
+      "openapi": "3.1.0",
+      "info": {
+        "title": "Odds"
+      },
+      "paths": {
+        "/x": {
+          "get": {
+            "parameters": [
+              {
+                "name": "n",
+                "in": "query",
+                "schema": {
+                  "type": [
+                    "null",
+                    "integer"
+                  ]
+                }
+              }
+            ],
+            "responses": {
+              "200": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "from": "",
+    "spec": {
+      "title": "Odds",
+      "version": "",
+      "description": "",
+      "baseUrl": "",
+      "slug": "odds",
+      "envPrefix": "ODDS",
+      "auth": [],
+      "operations": [
+        {
+          "id": "get_x",
+          "method": "GET",
+          "path": "/x",
+          "summary": "",
+          "tag": "other",
+          "params": [
+            {
+              "name": "n",
+              "py": "n",
+              "in": "query",
+              "required": false,
+              "type": {
+                "kind": "int"
+              },
+              "description": ""
+            }
+          ],
+          "body": null,
+          "response": {
+            "kind": "dict",
+            "of": {
+              "kind": "bool"
+            }
+          }
+        }
+      ],
+      "models": [],
+      "warnings": []
+    },
+    "code": "# forge:openapi odds ebdcaace\n\"\"\"\nClient for Odds, generated by Forge from its OpenAPI description.\n\nSettings come from the environment (Forge loads .env): ODDS_BASE_URL.\nIt is ordinary Python: edit it freely. Forge notices edits and asks before regenerating over them.\n\"\"\"\nfrom __future__ import annotations\n\nimport base64\nimport json\nimport os\nimport urllib.parse\nimport urllib.request\nfrom dataclasses import dataclass\nfrom typing import Any, Optional\n\nBASE_URL = os.environ.get(\"ODDS_BASE_URL\", \"\")\n\n\ndef _auth(headers: dict, query: dict) -> None:\n    \"\"\"Add the credentials from the environment (or .env), when they are set.\"\"\"\n    pass\n\n\ndef _plain(value: Any) -> Any:\n    \"\"\"Models and lists of them as plain JSON values.\"\"\"\n    if hasattr(value, \"to_dict\"):\n        return value.to_dict()\n    if isinstance(value, list):\n        return [_plain(v) for v in value]\n    if isinstance(value, dict):\n        return {k: _plain(v) for k, v in value.items()}\n    return value\n\n\ndef _path(template: str, values: dict) -> str:\n    return template.format_map({k: urllib.parse.quote(str(v), safe=\"\") for k, v in values.items()})\n\n\ndef _request(method: str, path: str, params: Optional[dict] = None, headers: Optional[dict] = None, body: Any = None, form: bool = False) -> Any:\n    query = {k: v for k, v in (params or {}).items() if v is not None}\n    sent = {\"Accept\": \"application/json\"}\n    sent.update({k: str(v) for k, v in (headers or {}).items() if v is not None})\n    _auth(sent, query)\n    url = BASE_URL.rstrip(\"/\") + path\n    if query:\n        url += \"?\" + urllib.parse.urlencode(query, doseq=True)\n    data = None\n    if body is not None:\n        if form:\n            data = urllib.parse.urlencode(_plain(body), doseq=True).encode(\"utf-8\")\n            sent[\"Content-Type\"] = \"application/x-www-form-urlencoded\"\n        else:\n            data = json.dumps(_plain(body)).encode(\"utf-8\")\n            sent[\"Content-Type\"] = \"application/json\"\n    request = urllib.request.Request(url, data=data, headers=sent, method=method)\n    with urllib.request.urlopen(request, timeout=30) as response:\n        raw = response.read()\n    if not raw:\n        return None\n    try:\n        return json.loads(raw)\n    except ValueError:\n        return raw.decode(\"utf-8\", \"replace\")\n\n\ndef get_x(n: Optional[int] = None) -> dict[str, bool]:\n    \"\"\"GET /x\"\"\"\n    data = _request(\"GET\", \"/x\", params={\"n\": n})\n    return data\n",
+    "only": [
+      "delete_pets_by"
+    ],
+    "subset": "# forge:openapi odds 600e559e\n\"\"\"\nClient for Odds, generated by Forge from its OpenAPI description.\n\nSettings come from the environment (Forge loads .env): ODDS_BASE_URL.\nIt is ordinary Python: edit it freely. Forge notices edits and asks before regenerating over them.\n\"\"\"\nfrom __future__ import annotations\n\nimport base64\nimport json\nimport os\nimport urllib.parse\nimport urllib.request\nfrom dataclasses import dataclass\nfrom typing import Any, Optional\n\nBASE_URL = os.environ.get(\"ODDS_BASE_URL\", \"\")\n\n\ndef _auth(headers: dict, query: dict) -> None:\n    \"\"\"Add the credentials from the environment (or .env), when they are set.\"\"\"\n    pass\n\n\ndef _plain(value: Any) -> Any:\n    \"\"\"Models and lists of them as plain JSON values.\"\"\"\n    if hasattr(value, \"to_dict\"):\n        return value.to_dict()\n    if isinstance(value, list):\n        return [_plain(v) for v in value]\n    if isinstance(value, dict):\n        return {k: _plain(v) for k, v in value.items()}\n    return value\n\n\ndef _path(template: str, values: dict) -> str:\n    return template.format_map({k: urllib.parse.quote(str(v), safe=\"\") for k, v in values.items()})\n\n\ndef _request(method: str, path: str, params: Optional[dict] = None, headers: Optional[dict] = None, body: Any = None, form: bool = False) -> Any:\n    query = {k: v for k, v in (params or {}).items() if v is not None}\n    sent = {\"Accept\": \"application/json\"}\n    sent.update({k: str(v) for k, v in (headers or {}).items() if v is not None})\n    _auth(sent, query)\n    url = BASE_URL.rstrip(\"/\") + path\n    if query:\n        url += \"?\" + urllib.parse.urlencode(query, doseq=True)\n    data = None\n    if body is not None:\n        if form:\n            data = urllib.parse.urlencode(_plain(body), doseq=True).encode(\"utf-8\")\n            sent[\"Content-Type\"] = \"application/x-www-form-urlencoded\"\n        else:\n            data = json.dumps(_plain(body)).encode(\"utf-8\")\n            sent[\"Content-Type\"] = \"application/json\"\n    request = urllib.request.Request(url, data=data, headers=sent, method=method)\n    with urllib.request.urlopen(request, timeout=30) as response:\n        raw = response.read()\n    if not raw:\n        return None\n    try:\n        return json.loads(raw)\n    except ValueError:\n        return raw.decode(\"utf-8\", \"replace\")\n"
+  }
+]

@@ -57,6 +57,8 @@ fn c(hex: u32) -> Hsla {
 /// Every colour token of the old `theme.css` (as `--name` → `name`).
 #[derive(Clone, Debug)]
 pub struct Theme {
+    /// Scale panel chrome, never the independently sized editor/terminal.
+    pub ui_scale: f32,
     pub name: ThemeName,
     pub bg: Hsla,
     pub bg_panel: Hsla,
@@ -120,6 +122,10 @@ pub struct Theme {
 }
 
 impl Theme {
+    pub fn px(&self, value: f32) -> gpui_kit::Pixels {
+        gpui_kit::px(value * self.ui_scale)
+    }
+
     pub fn get(name: ThemeName) -> Self {
         match name {
             ThemeName::Molten => Self::molten(),
@@ -129,6 +135,7 @@ impl Theme {
 
     pub fn molten() -> Self {
         Self {
+            ui_scale: 1.0,
             name: ThemeName::Molten,
             bg: c(0x120c0aff),
             bg_panel: c(0x170e0bff),
@@ -201,6 +208,7 @@ impl Theme {
 
     pub fn plain() -> Self {
         Self {
+            ui_scale: 1.0,
             name: ThemeName::Plain,
             bg: c(0x000000ff),
             bg_panel: c(0x000000ff),

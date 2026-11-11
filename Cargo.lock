@@ -1958,6 +1958,7 @@ dependencies = [
  "forge-dap",
  "forge-lsp",
  "forge-run",
+ "forge-scan",
  "forge-sys",
  "forge-term",
  "forge-text",
@@ -1974,9 +1975,11 @@ dependencies = [
 name = "forge-core"
 version = "1.0.0-dev"
 dependencies = [
+ "base64 0.22.1",
  "regex",
  "serde",
  "serde_json",
+ "url",
 ]
 
 [[package]]
@@ -2006,8 +2009,11 @@ dependencies = [
 name = "forge-run"
 version = "1.0.0-dev"
 dependencies = [
+ "base64 0.22.1",
+ "flate2",
  "forge-core",
  "forge-sys",
+ "rand 0.9.5",
  "serde_json",
  "tempfile",
 ]
@@ -2015,6 +2021,14 @@ dependencies = [
 [[package]]
 name = "forge-scan"
 version = "1.0.0-dev"
+dependencies = [
+ "forge-core",
+ "forge-run",
+ "forge-sys",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "forge-sys"
@@ -2024,10 +2038,13 @@ dependencies = [
  "forge-core",
  "forge-text",
  "serde",
+ "serde-saphyr",
  "serde_json",
  "sha1_smol",
  "tempfile",
  "trash",
+ "ureq",
+ "url",
 ]
 
 [[package]]
