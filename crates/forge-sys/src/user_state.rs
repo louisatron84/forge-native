@@ -83,6 +83,73 @@ pub fn legacy_data_dir() -> Option<PathBuf> {
     Some(dirs::config_dir()?.join("ideforfun"))
 }
 
+/// Import compatible Electron state once. Source files are untouched; existing
+/// native state wins. Exclusive temporary files keep interrupted copies retryable.
+pub fn import_legacy(legacy: &Path, native: &Path) -> io::Result<()> {
+    use std::io::{Read, Write};
+    let marker = native.join(".electron-imported");
+    if marker.exists() || !legacy.is_dir() || legacy == native {
+        return Ok(());
+    }
+    std::fs::create_dir_all(native)?;
+    let canonical_legacy = std::fs::canonicalize(legacy)?;
+    let mut todo = ["settings.json", "keybindings.json", "layouts.json", "recent.json", "workspaces", "templates"]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    let mut total = 0usize;
+    let mut entries = 0usize;
+    while let Some(relative) = todo.pop() {
+        entries += 1;
+        if entries > 10_000 {
+            return Err(io::Error::other("Too many files in Electron settings"));
+        }
+        let source = legacy.join(&relative);
+        let metadata = match std::fs::symlink_metadata(&source) {
+            Ok(m) => m,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e),
+        };
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        // Canonical checks also cover Windows directory junctions.
+        if !std::fs::canonicalize(&source)?.starts_with(&canonical_legacy) {
+            continue;
+        }
+        if metadata.is_dir() {
+            if relative.components().count() > 32 {
+                return Err(io::Error::other("Electron template nesting is too deep"));
+            }
+            for entry in std::fs::read_dir(source)? {
+                todo.push(relative.join(entry?.file_name()));
+            }
+        } else if metadata.is_file() {
+            let rel = relative.to_string_lossy().replace('\\', "/");
+            let target = crate::connect::project_path(native, &rel)?;
+            if std::fs::symlink_metadata(&target).is_ok() {
+                continue;
+            }
+            let mut bytes = Vec::new();
+            std::fs::File::open(source)?.take(16 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
+            total += bytes.len();
+            if bytes.len() > 16 * 1024 * 1024 || total > 64 * 1024 * 1024 {
+                return Err(io::Error::other("Electron settings exceed the import size limit"));
+            }
+            let parent = target.parent().ok_or_else(|| io::Error::other("Invalid import path"))?;
+            std::fs::create_dir_all(parent)?;
+            let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+            temp.write_all(&bytes)?;
+            if let Err(e) = temp.persist_noclobber(target) {
+                if e.error.kind() != io::ErrorKind::AlreadyExists {
+                    return Err(e.error);
+                }
+            }
+        }
+    }
+    std::fs::write(marker, "Electron settings imported\n")
+}
+
 pub struct UserState {
     dir: PathBuf,
 }

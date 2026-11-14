@@ -1370,6 +1370,9 @@ impl Workspace {
                         }
                     }
                     window.remove_window();
+                } else {
+                    // Cancelling a close must not arm a restart on an unrelated later quit.
+                    cx.global_mut::<AppState>().restart_after_update = false;
                 }
             })
             .ok();
