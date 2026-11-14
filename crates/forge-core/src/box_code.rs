@@ -139,7 +139,8 @@ fn helper(api: &ApiBox, p: &str) -> Vec<String> {
             format!("        url = {base_const}.rstrip(\"/\") + \"/\" + url.lstrip(\"/\")"),
         ]);
     }
-    append(&mut out,"    if params:\n        url += (\"&\" if \"?\" in url else \"?\") + urllib.parse.urlencode(params)\n    data = None\n    if body is not None:\n        data = json.dumps(body).encode(\"utf-8\")\n        headers[\"Content-Type\"] = \"application/json\"\n    request = urllib.request.Request(url, data=data, headers=headers, method=method)\n    with urllib.request.urlopen(request, timeout=30) as response:\n        return json.loads(response.read().decode(\"utf-8\"))\n\n");
+    append(&mut out, include_str!("http_redirect.py").trim_end());
+    append(&mut out,"    if params:\n        url += (\"&\" if \"?\" in url else \"?\") + urllib.parse.urlencode(params)\n    data = None\n    if body is not None:\n        data = json.dumps(body).encode(\"utf-8\")\n        headers[\"Content-Type\"] = \"application/json\"\n    request = urllib.request.Request(url, data=data, headers=headers, method=method)\n    with urlopen(request, timeout=30) as response:\n        return json.loads(response.read().decode(\"utf-8\"))\n\n");
     out.push(format!("def _{p}_cell(record, key):"));
     append(&mut out,"    \"\"\"One CSV cell: a field of a record (nested fields are joined with dots).\"\"\"\n    value = record\n    for part in key.split(\".\"):\n        value = value.get(part) if isinstance(value, dict) else None\n    if value is None:\n        return \"\"\n    if isinstance(value, (bool, list, dict)):\n        return json.dumps(value)\n    return str(value)");
     out
@@ -372,7 +373,7 @@ pub fn build_request(api: &ApiBox, req: &ApiRequest, env: &BTreeMap<String, Stri
 mod tests {
     use super::*;
     #[test]
-    fn generated_blocks_match_electron_for_auth_requests_csv_and_main() {
+    fn generated_blocks_match_ported_cases_with_safe_redirects() {
         let cases: Vec<serde_json::Value> =
             serde_json::from_str(include_str!("../tests/fixtures/api_code.json")).unwrap();
         for (index, case) in cases.iter().enumerate() {

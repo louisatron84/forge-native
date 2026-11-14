@@ -10,5 +10,6 @@ pub mod openapi;
 pub mod process;
 pub mod project_dir;
 pub mod search;
+pub mod templates;
 pub mod text_file;
 pub mod user_state;

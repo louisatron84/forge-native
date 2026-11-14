@@ -2,6 +2,7 @@
 
 // Parts of the views are wired up as the workspace is built (M2); remove when it is.
 #![allow(dead_code)]
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app_state;
 mod document;
@@ -18,14 +19,29 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 
 fn main() {
+    let started = std::time::Instant::now();
+    let trace_startup = std::env::var_os("FORGE_STARTUP_TIMINGS").is_some();
+    let stage = move |name: &str| {
+        if trace_startup {
+            eprintln!("forge_startup {name} {:.3}", started.elapsed().as_secs_f64() * 1000.);
+        }
+    };
+    stage("main");
     forge_update::startup();
-    gpui_kit::application().run(|cx: &mut App| {
+    stage("updater");
+    let application = gpui_kit::application();
+    stage("platform");
+    application.run(move |cx: &mut App| {
+        stage("callback");
         gpui_kit::init(cx);
+        stage("kit");
         let fonts: Vec<Cow<'static, [u8]>> = theme::FONTS.iter().map(|f| Cow::Borrowed(*f)).collect();
         if let Err(err) = cx.text_system().add_fonts(fonts) {
             eprintln!("couldn't load Forge's fonts: {err}");
         }
+        stage("fonts");
         app_state::init(cx);
+        stage("state");
         editor::bind_keys(cx);
         // Closing the last window quits.
         cx.on_window_closed(|cx, _| {
@@ -40,6 +56,8 @@ fn main() {
         .detach();
         let folder = std::env::args().nth(1).map(PathBuf::from).filter(|p| p.is_dir());
         workspace::open_window(folder, cx);
+        stage("workspace");
         cx.activate(true);
+        stage("activation");
     });
 }

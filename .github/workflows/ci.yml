@@ -1,0 +1,41 @@
+name: Rust checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.99.1
+      - name: Linux libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake pkg-config libasound2-dev libudev-dev libfontconfig1-dev libfreetype-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-render0-dev libxcb-randr0-dev libxcb-xinput-dev libxcb-keysyms1-dev libvulkan-dev libssl-dev libzstd-dev
+      - name: Python integration dependencies
+        run: python -m pip install ruff black debugpy pandas basedpyright
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --locked -j 1 -- -D warnings
+      - run: cargo test --workspace --locked -j 1
+      - run: python -W error -m unittest discover -s scripts/tests -v
+      - name: Model performance measurements
+        run: python scripts/perf.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: performance-${{ matrix.os }}
+          path: target/perf-report.json

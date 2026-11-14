@@ -28,6 +28,14 @@ pub(super) struct GraphState {
 }
 impl Workspace {
     pub(super) fn on_trace_message(&mut self, message: &serde_json::Value, cx: &mut Context<Self>) {
+        if let Some(tree) = forge_core::execution::parse_rec(message) {
+            self.project_graph.update(cx, |p, cx| p.show_recursion(tree, cx));
+            return;
+        }
+        if let Some(message) = forge_core::memory::parse_mem(message) {
+            self.memory.update(cx, |p, cx| p.add(message, cx));
+            return;
+        }
         if let Some(message) = forge_core::data_summary::parse_data_message(message) {
             self.pipeline.update(cx, |p, cx| p.add(message, cx));
             return;
@@ -57,6 +65,9 @@ impl Workspace {
         self.project_graph.update(cx, |p, cx| p.reset(cx));
         self.network.update(cx, |p, cx| p.reset(cx));
         self.reset_pipeline(cx);
+        self.memory.update(cx, |p, cx| p.reset(cx));
+        self.database.update(cx, |p, cx| p.set_data(Vec::new(), Vec::new(), cx));
+        self.refresh_navigation_panels(cx);
     }
     pub(super) fn ensure_graph(&mut self, cx: &mut Context<Self>) {
         if !self.graph.attempted && !self.graph.busy && self.graph.timer.is_none() && self.root.is_some() {
@@ -140,7 +151,8 @@ impl Workspace {
                     };
                     let scan = keep_last_good(next, previous.as_deref());
                     let graph = Arc::new(build_graph(&scan));
-                    Ok::<_, forge_scan::Error>((Arc::new(scan), graph))
+                    let schema = forge_core::database::build_schema(&scan);
+                    Ok::<_, forge_scan::Error>((Arc::new(scan), graph, schema))
                 })
                 .await;
             this.update(cx, |ws, cx| {
@@ -150,9 +162,18 @@ impl Workspace {
                 ws.graph.busy = false;
                 ws.graph.worker = None;
                 match result {
-                    Ok((scan, graph)) => {
+                    Ok((scan, graph, schema)) => {
+                        ws.memory.update(cx, |p, cx| p.set_graph(graph.clone(), cx));
+                        let map = ws.project_graph.read(cx).project_map.clone();
+                        let files = graph.modules.iter().map(|m| (m.path.clone(), m.lines)).collect();
+                        map.update(cx, |p, cx| {
+                            p.files = files;
+                            cx.notify();
+                        });
+                        ws.set_database(schema, cx);
                         ws.graph.raw = Some(scan);
                         ws.project_graph.update(cx, |p, _| p.graph = graph);
+                        ws.refresh_navigation_panels(cx);
                         ws.rebuild_graph(cx);
                     }
                     Err(error) => ws.project_graph.update(cx, |p, cx| {
@@ -240,6 +261,8 @@ impl Workspace {
                     self.reveal_panel("box", cx);
                 }
             }
+            GraphEvent::Objects => self.inspect_debug_objects(window, cx),
+            GraphEvent::Map => self.show_project_map(window, cx),
             GraphEvent::Refresh => {
                 self.graph.full = true;
                 self.start_graph_scan(cx);

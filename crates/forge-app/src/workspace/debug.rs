@@ -55,6 +55,30 @@ fn launch(client: &Client, command: &str, arguments: Value, tx: Sender, session:
 }
 
 impl Workspace {
+    pub(super) fn inspect_debug_objects(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(frame) = self.debug.frame.filter(|_| self.debug.paused) else {
+            self.status_note("Pause the debugger to inspect object relationships.", cx);
+            return;
+        };
+        let id = self.debug.active;
+        self.debug_request(
+            id,
+            "evaluate",
+            json!({"expression":forge_core::execution::object_expression(),"frameId":frame,"context":"watch"}),
+            window,
+            cx,
+            move |ws, body, _, cx| {
+                if ws.debug.frame != Some(frame) || !ws.debug.paused {
+                    return;
+                }
+                if let Some(graph) = body["result"].as_str().and_then(forge_core::execution::parse_object_graph) {
+                    ws.project_graph.update(cx, |p, cx| p.show_objects(graph, cx));
+                } else {
+                    ws.status_note("The debugger did not return an object graph.", cx);
+                }
+            },
+        );
+    }
     pub(crate) fn start_debug(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.debug.running {
             return self.debug_control("continue", window, cx);
@@ -80,6 +104,11 @@ impl Workspace {
             arguments["module"] = json!(module);
         }
         self.debug.generation += 1;
+        self.ensure_graph(cx);
+        self.project_graph.update(cx, |p, cx| {
+            p.trail = Default::default();
+            p.begin_run(cx);
+        });
         let generation = self.debug.generation;
         let (tx, mut rx) = futures::channel::mpsc::unbounded();
         self.debug.tx = Some(tx.clone());
@@ -140,6 +169,7 @@ impl Workspace {
                 .detach();
         }
         self.debug.running = false;
+        self.project_graph.update(cx, |p, cx| p.end_run(cx));
         self.tasks.end_debug();
         self.layouts_changed(cx);
         self.debug.paused = false;
@@ -283,6 +313,7 @@ impl Workspace {
                     return;
                 }
                 self.debug.paused = false;
+                self.project_graph.update(cx, |p, cx| p.end_run(cx));
                 self.debug.stopped = None;
                 self.debug.frame = None;
                 self.debug_panel.update(cx, |p, cx| {
@@ -452,6 +483,9 @@ impl Workspace {
             }
         });
         self.debug_watches(window, cx);
+        if self.project_graph.read(cx).detail_mode == 1 {
+            self.inspect_debug_objects(window, cx);
+        }
     }
 
     fn debug_expand(&mut self, reference: i64, index: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -500,6 +534,23 @@ impl Workspace {
                         depth: depth + 1,
                     })
                     .collect::<Vec<_>>();
+                if depth == 0 {
+                    let values = vars.iter().map(|v| (v.name.clone(), v.value.clone())).collect();
+                    let frames = ws
+                        .debug
+                        .frames
+                        .iter()
+                        .filter_map(|f| {
+                            Some((
+                                f["source"]["path"].as_str()?.to_string(),
+                                f["line"].as_u64()?.saturating_sub(1) as usize,
+                            ))
+                        })
+                        .collect::<Vec<_>>();
+                    if let Some(root) = ws.root.as_ref().map(|r| r.to_string_lossy().into_owned()) {
+                        ws.project_graph.update(cx, |p, cx| p.capture_debug(&root, &frames, values, cx));
+                    }
+                }
                 ws.debug_panel.update(cx, |p, cx| {
                     if p.variables.get(index).is_some_and(|v| v.reference == reference) {
                         p.variables.splice(index + 1..index + 1, vars);

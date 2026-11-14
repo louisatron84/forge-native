@@ -111,6 +111,14 @@ impl Workspace {
         }
         let group = self.tabs.active_group.min(1);
         let editor = self.editors[group].clone();
+        if id == "file.newProject" {
+            self.choose_project_template(window, cx);
+            return;
+        }
+        if id == "file.saveTemplate" {
+            self.save_project_template(window, cx);
+            return;
+        }
         match id {
             // ---------- files and folders ----------
             "help.checkUpdates" => self.check_updates(false, window, cx),
@@ -237,6 +245,11 @@ impl Workspace {
             // ---------- run ----------
             "run.smart" if self.debug.running || self.debug.breakpoints.count() > 0 => self.start_debug(window, cx),
             "run.smart" | "run.file" => self.run_current_file(window, cx),
+            "run.memory" => {
+                self.run.memory_next = true;
+                self.reveal_panel("memory", cx);
+                self.run_current_file(window, cx);
+            }
             "run.stop" => {
                 self.stop_debug(cx);
                 self.stop_run(cx);
@@ -366,6 +379,7 @@ impl Workspace {
             "panel.network" => self.reveal_panel("network", cx),
             "tests.show" => self.reveal_panel("tests", cx),
             "view.projectGraph" => self.reveal_panel("graph", cx),
+            "nav.projectMap" => self.show_project_map(window, cx),
             "connect.addApiBox" => self.on_connect_event(&crate::panels::connect::ConnectEvent::Add, window, cx),
             "api.addOpenApi" => self.on_connect_event(&crate::panels::connect::ConnectEvent::OpenApi, window, cx),
             "view.pipeline" => self.reveal_panel("pipeline", cx),

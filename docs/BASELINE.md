@@ -23,3 +23,21 @@ built `release\win-unpacked` copy exits at once, so it needs the installed
 | First build of the GPUI stack | 2 min 52 s | `cargo build -p forge-app`, 16 cores |
 
 Release builds and the editor/Graph stress cases are measured as they land.
+
+## Reproducible model measurements (2026-11-14)
+
+Run `python scripts/perf.py` on each native machine; output is
+`target/perf-report.json`. CI uploads this report for Windows and Linux.
+
+| Measure | Windows x64 optimized build | Scope |
+| --- | --- | --- |
+| Edit, tokenize and remove one character in a warm 100k-line buffer, p95 | 0.0025 ms | 1,000 model iterations; excludes screen/render latency |
+| Layout of a 400-node, 399-edge graph, p95 | 0.3486 ms | 100 iterations; excludes GPU drawing |
+| Standalone NSIS installer | 10,316,562 bytes | Under the 40 MB installer budget |
+| Update-enabled Velopack installer | 27,260,015 bytes | Includes update/runtime setup; under 40 MB |
+
+Toolchain: rustc 1.99.1, Windows build 26300, AMD64. These timings do **not**
+establish the desktop budgets: idle memory, editable-window cold start,
+keystroke-to-screen latency, scrolling FPS and graph layout plus drawing still
+need instrumented desktop measurements on the reference Windows/Linux machines.
+SHIP-09 stays open until those measurements are recorded and meet the targets.

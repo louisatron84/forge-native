@@ -137,48 +137,48 @@ with the same text, and the old source and tests. This ledger is how work resume
 - [x] T5-40 Inspect DataFrame shapes, columns and types (5.4 Data-flow visualisation)
 - [x] T5-41 Preview intermediate DataFrame contents (5.4 Data-flow visualisation)
 - [x] T5-42 Visualise data filtering, grouping and merging (5.4 Data-flow visualisation)
-- [ ] T5-43 Export visual pipelines as ordinary Python (5.4 Data-flow visualisation)
-- [ ] T5-44 Each block is an ordinary Python function; inputs and outputs come from its parameters, type hints and return value (5.4 Data-flow visualisation)
-- [ ] T5-45 Placing a block inserts a readable call (plus import); wiring blocks passes one block's result to the next (5.4 Data-flow visualisation)
-- [ ] T5-46 Built-in library of useful steps (read CSV/JSON, filter rows, group by, call API endpoint, retry, save) (5.4 Data-flow visualisation)
-- [ ] T5-47 User blocks: mark a project function (e.g. `@block` or `.ideforfun/blocks/`) and it appears in the library (5.4 Data-flow visualisation)
-- [ ] T5-48 Editing a block opens its Python; editing a built-in makes a project copy first, so library updates never overwrite it (5.4 Data-flow visualisation)
-- [ ] T5-49 A single "for each" container block instead of loop/if wiring (5.4 Data-flow visualisation)
-- [ ] T5-50 Live call graph while debugging (5.5 Execution visualisation)
-- [ ] T5-51 Animated function execution (5.5 Execution visualisation)
-- [ ] T5-52 Visualise recursion trees (5.5 Execution visualisation)
-- [ ] T5-53 Show current execution position on the graph (5.5 Execution visualisation)
-- [ ] T5-54 Display live variable values on nodes (5.5 Execution visualisation)
-- [ ] T5-55 Track variable changes over time (5.5 Execution visualisation)
-- [ ] T5-56 Visualise object relationships (5.5 Execution visualisation)
-- [ ] T5-57 Inspect object properties without opening debugger panels (5.5 Execution visualisation)
-- [ ] T5-58 Compare variable states between execution points (5.5 Execution visualisation)
-- [ ] T6-01 Project templates and custom scaffolding (6.4 Developer automation)
-- [ ] IDEA-01 Automatically reconstruct the architecture of an unfamiliar codebase (Architecture explorer)
-- [ ] IDEA-02 Show components, dependencies, entry points and communication paths (Architecture explorer)
-- [ ] IDEA-03 Provide a visual map of how the project works (Architecture explorer)
-- [ ] IDEA-04 Show execution time directly on the project graph (Visual profiler)
-- [ ] IDEA-05 Highlight expensive functions (Visual profiler)
-- [ ] IDEA-06 Display call paths to explain where time is spent (Visual profiler)
-- [ ] IDEA-07 Detect database connections and ORM models (Database explorer)
-- [ ] IDEA-08 Generate interactive schema diagrams (Database explorer)
-- [ ] IDEA-09 Show database relationships (Database explorer)
-- [ ] IDEA-10 Navigate from schema elements to relevant code (Database explorer)
-- [ ] IDEA-11 Track events through an application: where they originate, which handlers process them, what gets triggered and where they end up (Event-flow visualiser)
-- [ ] IDEA-12 Support asynchronous and event-driven applications (Event-flow visualiser)
-- [ ] IDEA-13 Visualise object references, memory allocations and object lifetimes (Memory explorer)
-- [ ] IDEA-14 Inspect memory usage during execution (Memory explorer)
-- [ ] IDEA-15 Identify unexpected object retention (Memory explorer)
+- [x] T5-43 Export visual pipelines as ordinary Python (5.4 Data-flow visualisation)
+- [x] T5-44 Each block is an ordinary Python function; inputs and outputs come from its parameters, type hints and return value (5.4 Data-flow visualisation)
+- [x] T5-45 Placing a block inserts a readable call (plus import); wiring blocks passes one block's result to the next (5.4 Data-flow visualisation)
+- [x] T5-46 Built-in library of useful steps (read CSV/JSON, filter rows, group by, call API endpoint, retry, save) (5.4 Data-flow visualisation)
+- [x] T5-47 User blocks: mark a project function (e.g. `@block` or `.ideforfun/blocks/`) and it appears in the library (5.4 Data-flow visualisation)
+- [x] T5-48 Editing a block opens its Python; editing a built-in makes a project copy first, so library updates never overwrite it (5.4 Data-flow visualisation)
+- [x] T5-49 A single "for each" container block instead of loop/if wiring (5.4 Data-flow visualisation)
+- [x] T5-50 Live call graph while debugging (5.5 Execution visualisation)
+- [x] T5-51 Animated function execution (5.5 Execution visualisation)
+- [x] T5-52 Visualise recursion trees (5.5 Execution visualisation)
+- [x] T5-53 Show current execution position on the graph (5.5 Execution visualisation)
+- [x] T5-54 Display live variable values on nodes (5.5 Execution visualisation)
+- [x] T5-55 Track variable changes over time (5.5 Execution visualisation)
+- [x] T5-56 Visualise object relationships (5.5 Execution visualisation)
+- [x] T5-57 Inspect object properties without opening debugger panels (5.5 Execution visualisation)
+- [x] T5-58 Compare variable states between execution points (5.5 Execution visualisation)
+- [x] T6-01 Project templates and custom scaffolding (6.4 Developer automation)
+- [x] IDEA-01 Automatically reconstruct the architecture of an unfamiliar codebase (Architecture explorer)
+- [x] IDEA-02 Show components, dependencies, entry points and communication paths (Architecture explorer)
+- [x] IDEA-03 Provide a visual map of how the project works (Architecture explorer)
+- [x] IDEA-04 Show execution time directly on the project graph (Visual profiler)
+- [x] IDEA-05 Highlight expensive functions (Visual profiler)
+- [x] IDEA-06 Display call paths to explain where time is spent (Visual profiler)
+- [x] IDEA-07 Detect database connections and ORM models (Database explorer)
+- [x] IDEA-08 Generate interactive schema diagrams (Database explorer)
+- [x] IDEA-09 Show database relationships (Database explorer)
+- [x] IDEA-10 Navigate from schema elements to relevant code (Database explorer)
+- [x] IDEA-11 Track events through an application: where they originate, which handlers process them, what gets triggered and where they end up (Event-flow visualiser) What's the highest? What's the highest subscription you can get, but no, you can get plus and then like MVP plus like is there anything above that because you did law it yeah but that's why that's technology, isn't it? I think after they die though just immortalize it freaking Edward she be red brush sorry, my boy who's deaf and blind years you learn oh you're number three got you there's him he doesn't get knocked off he literally he was mid building a bridge he got hit by a bow and didn't fall off and he was at the edge are we supposed to get in there though are we supposed to get in uses little diagonal one you're gonna lose this guy fuck off they didn't yeah really far out yeah you're fucked bro what insane either insane machine this streak's not looking pretty secure unless you'd come back here but I don't think so this what happens when you don't use claw if I had claw I would have it done by now it would be battle
+- [x] IDEA-12 Support asynchronous and event-driven applications (Event-flow visualiser)
+- [x] IDEA-13 Visualise object references, memory allocations and object lifetimes (Memory explorer)
+- [x] IDEA-14 Inspect memory usage during execution (Memory explorer)
+- [x] IDEA-15 Identify unexpected object retention (Memory explorer)
 
 ## M5: Ship 1.0 (9)
 
 - [ ] SHIP-01 Windows installer (per-user, no admin) and portable build
 - [ ] SHIP-02 Linux AppImage and .deb (package `forge`, replaces `ideforfun`)
-- [ ] SHIP-03 SHA256 checksums for every download
-- [ ] SHIP-04 Updates: check after start and every 6 h, download in the background, install when Forge closes, "Update ready" restarts now
-- [ ] SHIP-05 What's new on the Welcome page after an update; Help -> Release Notes
-- [ ] SHIP-06 Settings -> Updates (keep Forge up to date) and Help -> Check for Updates
-- [ ] SHIP-07 Import the Electron app's settings, keybindings, layouts, recent folders and templates on first run
+- [x] SHIP-03 SHA256 checksums for every download
+- [x] SHIP-04 Updates: check after start and every 6 h, download in the background, install when Forge closes, "Update ready" restarts now
+- [x] SHIP-05 What's new on the Welcome page after an update; Help -> Release Notes
+- [x] SHIP-06 Settings -> Updates (keep Forge up to date) and Help -> Check for Updates
+- [x] SHIP-07 Import the Electron app's settings, keybindings, layouts, recent folders and templates on first run
 - [ ] SHIP-08 CI on Windows and Linux (fmt, clippy, tests); release workflow
 - [ ] SHIP-09 Performance budgets met and recorded (docs/BASELINE.md)
 
@@ -241,3 +241,17 @@ with the same text, and the old source and tests. This ledger is how work resume
 - 2026-11-11: Added memory-only data/io models and runtime Pipeline inspection: function inputs/returns, intermediate values, DataFrame shapes, columns/dtypes, five-row horizontally scrollable previews, and row/group/column-change descriptions. Arc summaries avoid cloning table payloads into cards; ordered range queries skip uncaptured lines, trace paints coalesce at 32 ms, and retained captures are bounded. Source edits clear old values and reject later data from that old run; Run with data waits for current analysis rather than using a stale function selection. Both regressions failed before their fixes.
 - 2026-11-11: Verified **619 tests passed, 0 failed** with `cargo test --workspace --offline`; workspace Clippy with warnings denied, rustfmt and diff checks passed. Original real-Python data/loop/io fixtures and actual pandas filtering/grouping/merging all ran and passed (pandas installed only under ignored `target/pipeline-test-deps`, supplied through the test process's PYTHONPATH). Headless native interaction coverage checks selection, captured table rendering, Run, source navigation, unsaved edits and project switching. Self-review performed under the repo's no-subagents rule; Python helpers remain unchanged. T5-33..T5-42 complete. Next: T5-43..T5-49 pipeline export and block authoring; M4 and shipping verification remain open.
 - 2026-11-11: `cargo build -p forge-app --offline` succeeded after the previous app session closed; both `target/debug/forge.exe` and `forge-current.exe` refreshed with matching SHA-256 hashes. No manual app launch, commit, merge or publication performed.
+- 2026-11-13: Remaining M4 implementation in verification: pipeline block placement, setting/input rewiring, project copies of edited built-ins, For each and standalone export; native Database and Memory panels; paused-call graph feedback, local values/history/comparison, object relationships and recursive call diagrams; built-in and saved project templates. Focused native suite passed 89 tests, including real debugpy object inspection, allocation/retention capture and schema/source navigation. Real model/SQL/SQLite merging, memory models and execution models pass. Additional template and For each regression checks are included in the final workspace run. Parallel rustc processes exhausted system memory during broad verification; rerunning with `-j 1` rather than changing code or closing user applications. M4 boxes remain open until final checks pass.
+- 2026-11-13: T5-43..T5-49 complete. Native pipeline controls place built-in/project functions with imports, edit settings and input variables, insert For each containers, create pipelines and export ordinary Python. Editing a built-in makes a project blocks.py copy and redirects its import; existing helpers are preserved. Edits use document history and retain dirty buffers. Picker/export operations reject changed source/projects. Original call/argument/loop/export cases, project-block metadata and real pandas execution pass; the exported script runs without forge_blocks.py. A native regression caught DataFrames being iterated as column names; For each now uses records when the selected value/type identifies a table.
+- 2026-11-13: T5-50..T5-58 complete. Debugger pauses project the live stack/call path onto Graph, show local values on nodes, retain 200 pause snapshots, expose variable history and comparisons, and inspect bounded object relationships directly in Graph. The unchanged object helper preserves shared references and cycles. Recursion messages produce native call/return diagrams with a selector for every recorded tree. Real debugpy tests exercise locals, shared objects and variable changes; real traced recursion tests switch between functions. Regressions first reproduced stale object/recursion snapshots across projects and a paused caption after stopping debug; both are fixed. Object inspection refreshes when stepping with that view selected.
+- 2026-11-13: Database/Memory explorers complete (IDEA-07..IDEA-10, IDEA-13..IDEA-15). Schema merging combines SQLAlchemy/Django and other scanner-supported ORM models, SQL strings and read-only SQLite schemas, with keys, relationships, connections and model usages. Native diagrams support selection, pan/zoom, relation navigation and source links. Memory tracking is opt-in per run; its native chart, allocation sites/function descriptions, class counts/growth and final retention paths use bounded/coalesced histories. Actual Python tests verify allocation counts/retention and unchanged SQLite contents; connection passwords remain masked by the original scanner.
+- 2026-11-13: T6-01 complete: original built-in templates plus saved project templates, native creation/save pickers and background filesystem work. Substitutions preserve other template syntaxes, writes require a new project directory and validated paths, and capture skips environments, caches, secrets (including .env variants), symlinks, binaries and oversized files. Native interaction tests create a project, save it as a template and create another project from that saved copy. Every built-in template's Python/JSON parses.
+- 2026-11-13: Completed the visual-navigation audit: Project Map now opens from its command/shortcut and Graph, sizes Python files by lines, groups folders, marks current/problem/changed/recent files, supports keyboard filtering/Enter/Escape and source navigation. Where you are and In this file now use the shared scanner graph for imports, dependants, API hosts, functions and call summaries; no placeholder panels remain for those tools. Treemap area/overlap cases and native keyboard/context tests pass. IDEA-01..IDEA-06 are covered by the existing architecture graph, source navigation and visual profiler; IDEA-11..IDEA-12 additionally have the original real-Python event suite covering decorators, signals, Tk handlers, async tasks, threads and emitter-to-handler/call paths.
+- 2026-11-13: **M4 functional checklist complete: 87/87; all Tier 5 items complete.** Final `cargo test --workspace --offline -j 1`: **644 passed, 0 failed**. Workspace Clippy with warnings denied, rustfmt and diff checks passed. Real pandas cases ran using the isolated ignored test dependencies. Self-review completed under the repo's no-subagents rule. No manual app launch, commit, merge or publication performed. M5 remains open for installers, updates/migration, Windows/Linux release verification and recorded performance budgets; those checks are not implied by M4 functionality completion.
+- 2026-11-13: `cargo build -p forge-app --offline -j 1` succeeded. Refreshed `target/debug/forge.exe` and `target/debug/forge-current.exe`; their SHA-256 hashes match (`075D8C58ECA1B3C9929F06C6956F00B65F1DE7B83CCC39A022C28518281231FE`). Final ledger audit confirms 87 checked / 0 unchecked M4 items and 9 unchanged open M5 shipping items.
+
+- 2026-11-14: Security/performance review: isolated standard-library-only scanner/dataflow Python startup; bounded and linear LSP/DAP framing; trace authentication deadline; canonical ancestry for file creation; exclusive temporary saves; bounded captured helper output; same-origin redirect protection for native test calls and newly generated Python clients. Regression tests reproduced the issues before fixes. Bulk regex replacement compiles once per operation: 2,000-match debug measurement improved from 13.76 s to 23.75 ms. Updated Velopack to 1.3.39-g8d2844f and ZIP to 9.5.1; OSV scan of 868 registry packages reports eight remaining maintenance advisories, with the identified ZIP vulnerability advisories resolved. Full workspace tests: 653 passed, 0 failed; one manual benchmark ignored. No claim of a complete security audit or release/platform validation.
+- 2026-11-14: Added standalone website packaging scripts and a manually triggered native build workflow for Windows x64 setup/portable ZIP, Linux x64 Debian/portable archive, macOS Apple Silicon and Intel DMGs. Outputs include SHA256SUMS and validated downloads.json. Windows NSIS compilation smoke check and three packaging tests passed. macOS Developer ID signing/notarization is supported through local keychain configuration; hosted builds are unsigned/ad-hoc signed by default. Native Linux/Mac jobs and installation/upgrade validation remain pending. These packages do not create a Velopack update feed. See docs/DISTRIBUTION.md.
+- 2026-11-14: Packaging verification: three Python packaging tests pass with warnings treated as errors; workflow YAML parses and includes all four native targets. Full workspace Clippy with warnings denied and rustfmt passed. Windows optimized compilation is being performed locally; Linux/macOS binaries remain unbuilt until the native workflow runs.
+- 2026-11-14: Optimized Windows x64 build completed successfully (21m 32s first release compilation). Built releases/Forge-1.0.0-dev-windows-x64-setup.exe (10,316,562 bytes) and portable ZIP from that executable. Website manifest/checksums revalidated; ZIP CRC and packaged executable hash match the fresh release binary. Linux/macOS native builds, signing/notarization and installation/upgrade tests are still pending. No app/installer launch, commit, push or publication performed.
+- 2026-11-14: M5 implementation: added update-enabled Windows Velopack setup/portable bundles, architecture-specific update feeds and package names, Linux AppImage packaging plus Debian replacement metadata, Windows/Linux CI checks and native four-platform release builds. Website/feed verification rejects tampered archives. Added first-run Electron settings/workspace/template migration with bounded copies, no source mutation and no overwrite of native state. Local-feed tests cover available/downloaded/ready states, saved notes and same-size valid-archive tampering. Headless tests cover release-note commands, persisted update settings and cancellation of an update restart. Full Rust suite: 658 passed; four packaging tests passed; Clippy/rustfmt passed. Desktop performance budgets and actual installed upgrade validation are not claimed complete.

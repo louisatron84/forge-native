@@ -224,7 +224,12 @@ pub fn generate_client(spec: &ApiSpec, only: Option<&HashSet<String>>) -> String
         }
     }
     lines.extend(["".into(), "".into()]);
-    lines.extend(include_str!("openapi_runtime.py").lines().map(str::to_owned));
+    lines.extend(
+        include_str!("openapi_runtime.py")
+            .replace("    # FORGE_SAFE_OPENER", include_str!("http_redirect.py").trim_end())
+            .lines()
+            .map(str::to_owned),
+    );
     for model in spec.models.iter().filter(|m| needed.contains(&m.name)) {
         lines.extend(model_code(model))
     }
@@ -311,7 +316,7 @@ pub fn add_import(text: &str, line: &str) -> String {
 mod tests {
     use super::*;
     #[test]
-    fn original_generated_clients_and_operation_subsets_match_byte_for_byte() {
+    fn generated_clients_and_operation_subsets_match_hardened_fixtures() {
         let cases: serde_json::Value = serde_json::from_str(include_str!("../tests/fixtures/openapi.json")).unwrap();
         for c in cases.as_array().unwrap() {
             let spec = crate::openapi::read_spec(&c["doc"], c["from"].as_str().unwrap()).unwrap();

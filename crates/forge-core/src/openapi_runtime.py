@@ -29,8 +29,9 @@ def _request(method: str, path: str, params: Optional[dict] = None, headers: Opt
         else:
             data = json.dumps(_plain(body)).encode("utf-8")
             sent["Content-Type"] = "application/json"
+    # FORGE_SAFE_OPENER
     request = urllib.request.Request(url, data=data, headers=sent, method=method)
-    with urllib.request.urlopen(request, timeout=30) as response:
+    with urlopen(request, timeout=30) as response:
         raw = response.read()
     if not raw:
         return None

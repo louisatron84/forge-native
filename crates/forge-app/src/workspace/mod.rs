@@ -15,6 +15,7 @@ mod editors;
 mod floating;
 mod git;
 mod graph;
+mod inspectors;
 mod lsp;
 mod nav;
 mod openapi;
@@ -22,9 +23,11 @@ mod pipeline;
 mod pipeline_author;
 mod pyenv;
 mod run;
+mod templates;
 #[cfg(test)]
 mod tests;
 mod updates;
+mod visual_navigation;
 
 use crate::app_state::{self, AppState};
 use crate::document::{Document, DocumentEvent};
@@ -119,6 +122,10 @@ pub struct Workspace {
     graph: graph::GraphState,
     pub(crate) project_graph: Entity<crate::panels::graph::GraphPanel>,
     pub(crate) network: Entity<crate::panels::network::NetworkPanel>,
+    pub(crate) database: Entity<crate::panels::diagram::DiagramPanel>,
+    pub(crate) memory: Entity<crate::panels::memory::MemoryPanel>,
+    pub(crate) where_panel: Entity<crate::panels::navigation::ContextPanel>,
+    pub(crate) infile: Entity<crate::panels::navigation::ContextPanel>,
     pub(crate) pipeline: Entity<crate::panels::pipeline::PipelinePanel>,
     pipeline_state: pipeline::PipelineState,
     pub(crate) connect: Entity<crate::panels::connect::ConnectPanel>,
@@ -214,6 +221,10 @@ impl Workspace {
         let git_panel = cx.new(|cx| crate::panels::git::GitPanel::new(window, cx));
         let project_graph = cx.new(|cx| crate::panels::graph::GraphPanel::new(window, cx));
         let network = cx.new(|cx| crate::panels::network::NetworkPanel::new(window, cx));
+        let database = cx.new(|_| crate::panels::diagram::DiagramPanel::new("Database"));
+        let memory = cx.new(|_| crate::panels::memory::MemoryPanel::new());
+        let where_panel = cx.new(|_| crate::panels::navigation::ContextPanel::new(false));
+        let infile = cx.new(|_| crate::panels::navigation::ContextPanel::new(true));
         let pipeline = cx.new(|_| crate::panels::pipeline::PipelinePanel::new());
         let connect = cx.new(|cx| crate::panels::connect::ConnectPanel::new(window, cx));
         let openapi = cx.new(|cx| crate::panels::openapi::OpenApiPanel::new(window, cx));
@@ -233,6 +244,28 @@ impl Workspace {
         let outline = cx.new(|_| OutlinePanel::new());
         let calls = cx.new(|_| CallsPanel::new());
         let mut subs = Vec::new();
+        subs.push(
+            cx.subscribe_in(&where_panel, window, |ws, _, event, window, cx| ws.on_navigation_event(event, window, cx)),
+        );
+        subs.push(
+            cx.subscribe_in(&infile, window, |ws, _, event, window, cx| ws.on_navigation_event(event, window, cx)),
+        );
+        let map = project_graph.read(cx).project_map.clone();
+        subs.push(cx.subscribe_in(&map, window, |ws, _, event, window, cx| ws.on_navigation_event(event, window, cx)));
+        subs.push(
+            cx.subscribe_in(&database, window, |ws, _, event, window, cx| ws.on_diagram_event(event, window, cx)),
+        );
+        subs.push(cx.subscribe_in(&memory, window, |ws, _, event, window, cx| match event {
+            crate::panels::memory::MemoryEvent::Run => {
+                ws.run.memory_next = true;
+                ws.run_current_file(window, cx);
+            }
+            crate::panels::memory::MemoryEvent::Open(path, line) => ws.on_diagram_event(
+                &crate::panels::diagram::DiagramEvent::Open(path.clone(), line.saturating_sub(1) as usize),
+                window,
+                cx,
+            ),
+        }));
         subs.push(
             cx.subscribe_in(&pipeline, window, |ws, _, event, window, cx| ws.on_pipeline_event(event, window, cx)),
         );
@@ -379,6 +412,10 @@ impl Workspace {
             graph: graph::GraphState::default(),
             project_graph,
             network,
+            database,
+            memory,
+            where_panel,
+            infile,
             pipeline,
             pipeline_state: pipeline::PipelineState::default(),
             connect,
@@ -1145,6 +1182,7 @@ impl Workspace {
         }
         self.refresh_debug_markers(cx);
         self.queue_pipeline(cx);
+        self.refresh_navigation_panels(cx);
     }
 
     fn update_title(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1332,6 +1370,9 @@ impl Workspace {
                         }
                     }
                     window.remove_window();
+                } else {
+                    // Cancelling a close must not arm a restart on an unrelated later quit.
+                    cx.global_mut::<AppState>().restart_after_update = false;
                 }
             })
             .ok();
@@ -1622,6 +1663,11 @@ impl Workspace {
 
     /// The view of a panel (created the first time it's shown).
     pub(crate) fn panel_view(&mut self, id: &'static str, cx: &mut Context<Self>) -> AnyView {
+        if id == "where" || id == "infile" {
+            self.ensure_graph(cx);
+            self.refresh_navigation_panels(cx);
+            return if id == "where" { self.where_panel.clone().into() } else { self.infile.clone().into() };
+        }
         if id == "toolbox" {
             return self.toolbox.clone().into();
         }
@@ -1634,6 +1680,13 @@ impl Workspace {
         }
         if id == "network" {
             return self.network.clone().into();
+        }
+        if id == "database" {
+            self.ensure_graph(cx);
+            return self.database.clone().into();
+        }
+        if id == "memory" {
+            return self.memory.clone().into();
         }
         if id == "pipeline" {
             self.ensure_pipeline(cx);

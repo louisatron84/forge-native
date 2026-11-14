@@ -1,0 +1,7 @@
+{
+  "chat/__init__.py": "",
+  "chat/server.py": "import asyncio\nimport threading\nimport socketio\nfrom django.dispatch import receiver\nfrom django.db.models.signals import post_save\nfrom chat.store import save_message\n\nsio = socketio.AsyncServer()\n\n@sio.on('message')\nasync def on_message(sid, data):\n    save_message(data)\n    await sio.emit('reply', data)\n\n@sio.on('reply')\nasync def on_reply(sid, data):\n    print(data)\n\n@receiver(post_save)\ndef audit(sender, **kw):\n    pass\n\nasync def heartbeat():\n    while True:\n        await asyncio.sleep(1)\n\ndef worker():\n    pass\n\nasync def main():\n    asyncio.create_task(heartbeat())\n    threading.Thread(target=worker).start()",
+  "chat/store.py": "def save_message(data):\n    return data",
+  "gui.py": "import tkinter as tk\n\ndef clicked():\n    print('hi')\n\ndef on_key(event):\n    pass\n\nroot = tk.Tk()\nbutton = tk.Button(root, text='Go', command=clicked)\nroot.bind('<Key>', on_key)\nroot.event_generate('<Key>')",
+  "plain.py": "def add(a, b):\n    return a + b\n"
+}

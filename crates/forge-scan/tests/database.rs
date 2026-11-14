@@ -1,9 +1,41 @@
 use forge_core::database::build_schema;
-use std::{collections::BTreeMap,time::Duration};
+use std::{collections::BTreeMap, time::Duration};
 #[test]
-fn real_database_scan_merges_models_sql_and_readonly_sqlite_keys_relations_usage_and_masked_connections(){let dir=tempfile::tempdir().unwrap();let Some(python)=forge_run::python::find_python(dir.path(),None)else{return;};let files:BTreeMap<String,String>=serde_json::from_str(include_str!("fixtures/db_files.json")).unwrap();for(path,text)in files{let p=dir.path().join(path);std::fs::create_dir_all(p.parent().unwrap()).unwrap();std::fs::write(p,text).unwrap();}
-    let make=forge_sys::process::run_captured(&python,&["-c".into(),"import sqlite3; c=sqlite3.connect('notes.db'); c.executescript('CREATE TABLE tags (id INTEGER PRIMARY KEY, label TEXT); CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL, tag_id INTEGER REFERENCES tags(id)); CREATE TABLE archive (id INTEGER PRIMARY KEY, note_id INTEGER REFERENCES notes(id));'); c.commit(); c.close()".into()],dir.path(),&[],"",Duration::from_secs(20));assert!(make.ok());let original=std::fs::read(dir.path().join("notes.db")).unwrap();
-    let raw=forge_scan::run_scan(&python,dir.path(),&BTreeMap::new(),Duration::from_secs(30)).unwrap();assert!(!serde_json::to_string(&raw).unwrap().contains("hunter2"));let schema=build_schema(&raw);assert_eq!(schema.tables.iter().map(|t|t.name.as_str()).collect::<Vec<_>>(),["archive","customer","notes","order","posts","product","tags","users"]);
-    let table=|name:&str|schema.tables.iter().find(|t|t.name==name).unwrap();assert_eq!(table("users").model.as_deref(),Some("User"));assert_eq!(table("users").columns[0].type_,"int");assert_eq!(table("users").columns[1].type_,"String(50)");assert!(table("users").columns[0].pk);assert!(table("customer").columns.iter().any(|c|c.name=="email"&&c.unique));assert_eq!(table("notes").sources,["sql","database"]);assert_eq!(table("posts").used_by,["models_sa:newest"]);
-    let mut rels=schema.relations.iter().map(|r|format!("{} {} {}",r.from,r.kind,r.to)).collect::<Vec<_>>();rels.sort();assert_eq!(rels,["archive fk notes","notes fk tags","order fk customer","order many product","posts fk users"]);assert_eq!(schema.connections.len(),2);assert_eq!(std::fs::read(dir.path().join("notes.db")).unwrap(),original);
+fn real_database_scan_merges_models_sql_and_readonly_sqlite_keys_relations_usage_and_masked_connections() {
+    let dir = tempfile::tempdir().unwrap();
+    let Some(python) = forge_run::python::find_python(dir.path(), None) else {
+        return;
+    };
+    let files: BTreeMap<String, String> = serde_json::from_str(include_str!("fixtures/db_files.json")).unwrap();
+    for (path, text) in files {
+        let p = dir.path().join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+    let make=forge_sys::process::run_captured(&python,&["-c".into(),"import sqlite3; c=sqlite3.connect('notes.db'); c.executescript('CREATE TABLE tags (id INTEGER PRIMARY KEY, label TEXT); CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL, tag_id INTEGER REFERENCES tags(id)); CREATE TABLE archive (id INTEGER PRIMARY KEY, note_id INTEGER REFERENCES notes(id));'); c.commit(); c.close()".into()],dir.path(),&[],"",Duration::from_secs(20));
+    assert!(make.ok());
+    let original = std::fs::read(dir.path().join("notes.db")).unwrap();
+    let raw = forge_scan::run_scan(&python, dir.path(), &BTreeMap::new(), Duration::from_secs(30)).unwrap();
+    assert!(!serde_json::to_string(&raw).unwrap().contains("hunter2"));
+    let schema = build_schema(&raw);
+    assert_eq!(
+        schema.tables.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+        ["archive", "customer", "notes", "order", "posts", "product", "tags", "users"]
+    );
+    let table = |name: &str| schema.tables.iter().find(|t| t.name == name).unwrap();
+    assert_eq!(table("users").model.as_deref(), Some("User"));
+    assert_eq!(table("users").columns[0].type_, "int");
+    assert_eq!(table("users").columns[1].type_, "String(50)");
+    assert!(table("users").columns[0].pk);
+    assert!(table("customer").columns.iter().any(|c| c.name == "email" && c.unique));
+    assert_eq!(table("notes").sources, ["sql", "database"]);
+    assert_eq!(table("posts").used_by, ["models_sa:newest"]);
+    let mut rels = schema.relations.iter().map(|r| format!("{} {} {}", r.from, r.kind, r.to)).collect::<Vec<_>>();
+    rels.sort();
+    assert_eq!(
+        rels,
+        ["archive fk notes", "notes fk tags", "order fk customer", "order many product", "posts fk users"]
+    );
+    assert_eq!(schema.connections.len(), 2);
+    assert_eq!(std::fs::read(dir.path().join("notes.db")).unwrap(), original);
 }

@@ -25,7 +25,14 @@ impl Global for AppState {}
 
 pub fn init(cx: &mut App) {
     let user = UserState::new(data_dir());
+    let migration_error = forge_sys::user_state::legacy_data_dir().and_then(|old| {
+        std::fs::create_dir_all(user.dir())
+            .and_then(|_| forge_sys::user_state::import_legacy(&old, user.dir()))
+            .err()
+            .map(|e| format!("Couldn't import Electron settings: {e}"))
+    });
     let (settings, settings_error) = user.settings();
+    let settings_error = settings_error.or(migration_error);
     let (overrides, keys_error) = user.keybindings();
     let mut keymap = Keymap::default();
     keymap.set_overrides(overrides);

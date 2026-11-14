@@ -42,6 +42,9 @@ impl Workspace {
                     let changed =
                         ws.git_panel.read(cx).repo().is_some() && ws.git_panel.read(cx).repo() != repo.as_ref();
                     ws.git_panel.update(cx, |p, cx| p.set_status(repo, cx));
+                    if ws.project_graph.read(cx).detail_mode == 3 {
+                        ws.refresh_map_markers(cx);
+                    }
                     if changed {
                         ws.reload_clean_git_docs(cx);
                         ws.file_tree.update(cx, |t, cx| t.refresh_all(cx));

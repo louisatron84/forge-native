@@ -1,0 +1,85 @@
+name: Build website downloads
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/m5-shipping]
+permissions:
+  contents: read
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Install update packager
+        if: runner.os != 'macOS'
+        run: dotnet tool install --global vpk --version 1.3.39-g8d2844f
+      - name: Install Rust target
+        shell: bash
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          rustup default 1.99.1
+          rustup target add ${{ matrix.target }}
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake pkg-config libasound2-dev libudev-dev libfontconfig1-dev libfreetype-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-render0-dev libxcb-randr0-dev libxcb-xinput-dev libxcb-keysyms1-dev libvulkan-dev libssl-dev libzstd-dev
+      - name: Windows installer tools
+        if: runner.os == 'Windows'
+        run: choco install nsis --yes --no-progress
+      - name: macOS Metal compiler
+        if: runner.os == 'macOS'
+        run: |
+          if ! xcrun --find metal; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+      - name: Packaging script checks
+        run: python -m unittest discover -s scripts/tests -v
+      - name: Build native download files
+        run: python scripts/package.py --target ${{ matrix.target }} --velopack
+      - name: Verify all downloads and update feeds
+        run: python scripts/verify_release.py releases
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forge-${{ matrix.target }}
+          path: releases/*
+          if-no-files-found: error
+  website:
+    needs: package
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          path: releases
+          pattern: forge-*
+          merge-multiple: true
+      - name: Validate and merge website metadata
+        run: python scripts/package.py --merge
+      - run: python scripts/verify_release.py releases
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forge-website-downloads
+          path: releases/*
+          if-no-files-found: error

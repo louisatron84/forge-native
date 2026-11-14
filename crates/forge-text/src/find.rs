@@ -146,8 +146,14 @@ pub fn replacement_for(matched: &str, query: &str, replacement: &str, opts: Find
 
 /// Replace every match (back to front so earlier positions stay valid). Returns the first match's start.
 pub fn replace_all(b: &mut TextBuffer, matches: &[Match], replacement: &str, query: &str, opts: FindOptions) -> Pos {
+    // Compile and translate once per operation, not once for every match.
+    let regex = opts.regex.then(|| build_regex(query, opts).ok()).flatten();
+    let expanded = regex.as_ref().map(|_| js_replacement(replacement));
     for m in matches.iter().rev() {
-        let text = replacement_for(&b.range(m.start, m.end), query, replacement, opts);
+        let text = match (&regex, &expanded) {
+            (Some(re), Some(expanded)) => re.replace(&b.range(m.start, m.end), expanded.as_str()).into_owned(),
+            _ => replacement.to_owned(),
+        };
         b.delete(m.start, m.end);
         b.insert(m.start, &text);
     }
@@ -169,6 +175,19 @@ mod tests {
     }
 
     const LINES: [&str; 3] = ["Foo foo food", "bar.foo()", ""];
+
+    #[test]
+    #[ignore = "manual performance measurement"]
+    fn benchmark_regex_replace_all() {
+        let source = "get_café(1)\n".repeat(2000);
+        let options = opts(false, false, true);
+        let found = find_matches(&source.lines().collect::<Vec<_>>(), r"get_(\w+)", options, DEFAULT_LIMIT);
+        let mut buffer = TextBuffer::new(&source);
+        let start = std::time::Instant::now();
+        replace_all(&mut buffer, &found.matches, "fetch_$1", r"get_(\w+)", options);
+        eprintln!("replace_all 2000 regex matches: {:?}", start.elapsed());
+        assert_eq!(buffer.text(), "fetch_café(1)\n".repeat(2000));
+    }
 
     #[test]
     fn finds_plain_text_case_insensitive_by_default() {

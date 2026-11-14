@@ -86,10 +86,7 @@ fn error(message: impl Into<String>) -> io::Error {
 /// Create an empty file or a folder named `name` inside `dir` ("pkg/mod.py"
 /// creates "pkg" on the way). Returns its full path; never overwrites.
 pub fn create_entry(dir: &Path, name: &str, is_dir: bool) -> io::Result<PathBuf> {
-    if let Some(problem) = name_problem(name, true) {
-        return Err(error(problem));
-    }
-    let target = name.split(['/', '\\']).fold(dir.to_path_buf(), |p, part| p.join(part));
+    let target = crate::connect::project_path(dir, name)?;
     if target.exists() {
         return Err(error(format!("\"{name}\" already exists.")));
     }
@@ -142,6 +139,26 @@ mod tests {
 
     fn e(name: &str, is_dir: bool) -> (String, bool) {
         (name.to_owned(), is_dir)
+    }
+
+    #[test]
+    fn nested_creation_cannot_escape_through_a_directory_link() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let link = root.path().join("linked");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+        #[cfg(windows)]
+        {
+            // Junctions require no symlink privilege and exercise canonical ancestry on Windows.
+            let mut command = std::process::Command::new("cmd");
+            command.args(["/c", "mklink", "/J"]).arg(&link).arg(outside.path());
+            crate::process::hide_window(&mut command);
+            assert!(command.output().unwrap().status.success());
+        }
+        let created = create_entry(root.path(), "linked/escape.py", false);
+        assert!(created.is_err(), "nested creation escaped the chosen directory");
+        assert!(!outside.path().join("escape.py").exists());
     }
 
     #[test]

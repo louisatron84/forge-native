@@ -133,14 +133,36 @@ impl Workspace {
                 break;
             }
         }
-        let taken = vars.iter().cloned().collect();
+        let taken = p
+            .flow
+            .iter()
+            .flat_map(|f| &f.nodes)
+            .flat_map(|n| n.sets.iter().cloned())
+            .chain(raw.params.iter().map(|p| p.name.clone()))
+            .collect();
         let inputs = vars.iter().rev().take(2).cloned().collect::<Vec<_>>();
         let code = if each {
             let Some(over) = inputs.first() else {
                 self.status_note("Select a step with a value before using For each.", cx);
                 return;
             };
-            for_each_code(b, over, &taken, false).0
+            let library = self.pipeline_library(cx);
+            let table =
+                raw.params.iter().any(|param| {
+                    param.name == *over && param.annotation.as_ref().is_some_and(|a| a.contains("DataFrame"))
+                }) || raw.steps.iter().flatten().filter(|s| s.targets.contains(over)).any(|s| {
+                    s.call.as_ref().is_some_and(|c| {
+                        library
+                            .iter()
+                            .any(|b| b.name == c.name && b.returns.as_ref().is_some_and(|r| r.contains("DataFrame")))
+                    })
+                }) || node.is_some_and(|n| {
+                    p.log
+                        .between(&format!("{}:{}", p.module, p.func), n.line, n.end_line)
+                        .iter()
+                        .any(|point| point.var == *over && point.summary.kind == "dataframe")
+                });
+            for_each_code(b, over, &taken, table).0
         } else {
             vec![block_call(b, &inputs, &taken).0]
         };
@@ -166,12 +188,22 @@ impl Workspace {
             PipelineEvent::AddBlock(each) => {
                 self.ensure_graph(cx);
                 let each = *each;
+                let root = self.root.clone();
+                let snapshot = self.pipeline_snapshot(cx).map(|(path, text, _)| (path, text));
                 let choices = self
                     .pipeline_library(cx)
                     .into_iter()
                     .map(|b| {
+                        let root = root.clone();
+                        let snapshot = snapshot.clone();
                         let detail = b.doc.clone();
                         Choice::new(format!("{} · {}", b.name, b.kind), move |ws, window, cx| {
+                            if ws.root != root
+                                || snapshot.as_ref().is_none_or(|(path, text)| !ws.source_still_matches(path, text, cx))
+                            {
+                                ws.status_note("The source or project changed. Choose the block again.", cx);
+                                return;
+                            }
                             ws.place_pipeline_block(&b, each, window, cx)
                         })
                         .detail(detail)

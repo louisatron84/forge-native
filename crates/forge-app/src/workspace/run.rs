@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 #[derive(Default)]
 pub(crate) struct RunState {
     pub data_target: Option<String>,
+    pub memory_next: bool,
     pub file: RunFile,
     pub file_path: Option<PathBuf>,
     /// The configuration Run and Debug use; None = the open file.
@@ -136,7 +137,9 @@ impl Workspace {
     /// Run the open file (or the selected configuration) with its output in the Output panel.
     pub(crate) fn run_current_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let data_target = self.run.data_target.take();
-        let trace = data_target.is_some()
+        let memory = std::mem::take(&mut self.run.memory_next) || self.panel_is_shown("memory");
+        let trace = memory
+            || data_target.is_some()
             || self.panel_is_shown("network")
             || (self.effective_settings(cx).show_runs_on_graph && self.panel_is_shown("graph"));
         self.reveal_panel("output", cx);
@@ -181,6 +184,9 @@ impl Workspace {
         if let Some(target) = data_target {
             run_spec.env.insert("FORGE_TRACE_DATA".into(), target);
         }
+        if memory {
+            run_spec.env.insert("FORGE_TRACE_MEMORY".into(), "1".into());
+        }
         self.start_run(run_spec, window, cx);
         self.focus_editor(window, cx);
     }
@@ -195,6 +201,7 @@ impl Workspace {
         let id = self.run.id;
         self.network.update(cx, |p, cx| p.begin(id, cx));
         self.pipeline.update(cx, |p, cx| p.begin(id, cx));
+        self.memory.update(cx, |p, cx| p.begin(id, cx));
         let project = self.root.clone();
         let (tx, mut rx) = futures::channel::mpsc::unbounded::<RunEvent>();
         self.run.current = PythonRun::start(spec, move |e| {
@@ -222,6 +229,10 @@ impl Workspace {
                             if ws.root == project {
                                 ws.project_graph.update(cx, |p, cx| p.end_run(cx));
                                 ws.network.update(cx, |p, cx| p.end(cx));
+                                ws.memory.update(cx, |p, cx| {
+                                    p.log.running = false;
+                                    cx.notify();
+                                });
                                 ws.run.last_failed = code.is_some_and(|code| code != 0);
                             }
                             out.update(cx, |o, cx| o.finished(code, ms, cx));

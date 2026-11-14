@@ -21,3 +21,9 @@ Needs Rust (stable) and, on Windows, the Visual Studio C++ Build Tools.
 cargo run -p forge-app
 cargo test --workspace
 ```
+
+## Installers and website downloads
+
+See [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md) for the manual native build
+workflow, Windows setup/portable downloads, Linux Debian/portable packages,
+macOS Apple Silicon/Intel disk images, signing and website download metadata.
