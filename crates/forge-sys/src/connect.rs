@@ -13,8 +13,14 @@ pub fn project_path(root: &Path, relative: &str) -> io::Result<PathBuf> {
     let base = if root.is_absolute() { root.to_path_buf() } else { canonical_root.clone() };
     let path = relative.split(['/', '\\']).fold(base, |p, part| p.join(part));
     let mut existing = path.as_path();
-    while !existing.exists() {
-        existing = existing.parent().ok_or_else(|| io::Error::other("Invalid project path"))?;
+    loop {
+        match std::fs::symlink_metadata(existing) {
+            Ok(_) => break,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                existing = existing.parent().ok_or_else(|| io::Error::other("Invalid project path"))?;
+            }
+            Err(e) => return Err(e),
+        }
     }
     if !std::fs::canonicalize(existing)?.starts_with(&canonical_root) {
         return Err(io::Error::other("The target must stay inside the project."));
@@ -130,7 +136,13 @@ pub fn test_call_with_options(
                     Ok(u) => u,
                     Err(_) => return fail("The API returned an invalid redirect address.".into()),
                 };
-                if next.origin() != first.origin() && !matches!(api.auth, BoxAuth::None) {
+                // Custom headers can carry credentials even with the auth picker set to None.
+                // Bodies and query strings may also contain private data; don't replay them off-site.
+                let private_request = !matches!(api.auth, BoxAuth::None)
+                    || req.headers.iter().any(|h| !h.key.trim().is_empty())
+                    || body.is_some()
+                    || first.query().is_some();
+                if next.origin() != first.origin() && private_request {
                     result.error=Some(format!("The API redirected to {}, another site, so Forge didn't send your key there. If that's right, use {} as the URL.",next.host_str().unwrap_or("another site"),next.origin().ascii_serialization()));
                     result.ms = started.elapsed().as_secs_f64() * 1000.0;
                     return result;
@@ -220,6 +232,24 @@ mod tests {
         });
         (format!("http://{addr}"), seen, worker)
     }
+    #[test]
+    fn redirects_do_not_forward_custom_credentials_when_auth_is_none() {
+        let root = tempfile::tempdir().unwrap();
+        let (base, seen, worker) = server();
+        let mut api = new_api_box(&[], "Test");
+        api.base_url = base.clone();
+        api.auth = BoxAuth::None;
+        api.requests[0].url = "/away".into();
+        api.requests[0].headers =
+            vec![forge_core::boxes::KeyValue { key: "X-Private-Token".into(), value: "secret".into(), arg: false }];
+        let result = test_call(root.path(), &api, &api.requests[0].id);
+        let request = seen.lock().unwrap().clone();
+        let _ = ureq::get(format!("{base}/stop")).call();
+        worker.join().unwrap();
+        assert!(request.starts_with("GET /away "), "custom credentials followed a cross-origin redirect");
+        assert!(result.error.is_some());
+    }
+
     #[test]
     fn test_calls_json_text_errors_redirects_and_limits() {
         let root = tempfile::tempdir().unwrap();

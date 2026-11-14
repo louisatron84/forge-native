@@ -1,5 +1,51 @@
 use forge_core::{blocks::*, pipeline_edit::*};
 use std::{collections::BTreeSet, path::Path, time::Duration};
+
+#[test]
+fn project_blocks_keep_type_hints_and_only_expose_marked_or_public_block_functions() {
+    use forge_core::project_graph::{ModuleNode, ProjectGraph, RawParamSig, SymbolNode};
+    let symbol = |name: &str, marked: bool| SymbolNode {
+        name: name.into(),
+        qual: name.into(),
+        kind: "function".into(),
+        decorators: if marked { vec!["tools.block".into()] } else { Vec::new() },
+        line: 3,
+        params: Some(vec![RawParamSig { name: "df".into(), annotation: Some("pd.DataFrame".into()), default: None }]),
+        returns: Some("pd.DataFrame".into()),
+        doc: Some("Tidy up.".into()),
+        ..Default::default()
+    };
+    let graph = ProjectGraph {
+        modules: vec![
+            ModuleNode {
+                id: "app.steps".into(),
+                path: "app/steps.py".into(),
+                symbols: vec![symbol("clean", true), symbol("other", false)],
+                ..Default::default()
+            },
+            ModuleNode {
+                id: "blocks".into(),
+                path: "blocks.py".into(),
+                symbols: vec![symbol("save_report", false), symbol("_helper", false)],
+                ..Default::default()
+            },
+            ModuleNode { id: "forge_blocks".into(), symbols: vec![symbol("read_csv", true)], ..Default::default() },
+        ],
+        ..Default::default()
+    };
+    let blocks = project_blocks(&graph);
+    assert_eq!(
+        blocks.iter().map(|b| format!("{}.{}:{}", b.module, b.name, b.kind)).collect::<Vec<_>>(),
+        ["app.steps.clean:transform", "blocks.save_report:save"]
+    );
+    assert!(is_data_param(&blocks[0].params[0], 0));
+    assert_eq!(blocks[0].returns.as_deref(), Some("pd.DataFrame"));
+    assert_eq!(blocks[0].path.as_deref(), Some("app/steps.py"));
+    let params = parse_params("a: dict[str, str], b: str = 'x,y', *args: Any");
+    assert_eq!(params.len(), 3);
+    assert_eq!(params[1].default.as_deref(), Some("'x,y'"));
+    assert!(!is_data_param(&params[2], 2));
+}
 #[test]
 fn builtin_parameters_calls_settings_and_project_copies_match_the_original() {
     let blocks = builtin_blocks();

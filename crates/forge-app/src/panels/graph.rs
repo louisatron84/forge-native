@@ -26,6 +26,8 @@ pub enum GraphEvent {
     Open { module: String, line: usize },
     Box(String),
     Attach { box_id: String, module: String },
+    Objects,
+    Map,
 }
 #[derive(Clone)]
 pub struct DraggedSource {
@@ -52,6 +54,14 @@ struct NetFlash {
     expires: std::time::Instant,
 }
 pub struct GraphPanel {
+    pub trail: forge_core::execution::DebugTrail,
+    pub objects: gpui_kit::Entity<super::diagram::DiagramPanel>,
+    pub project_map: gpui_kit::Entity<super::navigation::MapPanel>,
+    pub recursion: gpui_kit::Entity<super::diagram::DiagramPanel>,
+    pub detail_mode: usize,
+    pub recursion_trees: std::collections::BTreeMap<String, forge_core::execution::RecTree>,
+    recursion_key: Option<String>,
+    compare_stop: Option<usize>,
     pub graph: Arc<ProjectGraph>,
     pub data: Arc<GraphViewData>,
     layout: Arc<Layout>,
@@ -103,6 +113,14 @@ impl GraphPanel {
             }
         });
         Self {
+            trail: Default::default(),
+            objects: cx.new(|_| super::diagram::DiagramPanel::new("Paused object relationships")),
+            project_map: cx.new(|cx| super::navigation::MapPanel::new(window, cx)),
+            recursion: cx.new(|_| super::diagram::DiagramPanel::new("Recursive calls")),
+            detail_mode: 0,
+            recursion_trees: Default::default(),
+            recursion_key: None,
+            compare_stop: None,
             graph: Arc::default(),
             data: Arc::default(),
             layout: Arc::default(),
@@ -139,6 +157,11 @@ impl GraphPanel {
         }
     }
     pub fn reset(&mut self, cx: &mut Context<Self>) {
+        self.project_map.update(cx, |p, cx| p.clear(cx));
+        self.trail = Default::default();
+        self.recursion_trees.clear();
+        self.recursion_key = None;
+        self.detail_mode = 0;
         self.testing_boxes = Arc::default();
         self.test_animation = None;
         self.begin_run(cx);
@@ -187,6 +210,19 @@ impl GraphPanel {
         cx.notify();
     }
     pub fn begin_run(&mut self, cx: &mut Context<Self>) {
+        if self.status.starts_with("Paused ·") {
+            self.status.clear();
+        }
+        self.recursion_trees.clear();
+        self.recursion_key = None;
+        self.objects.update(cx, |p, cx| {
+            p.status = "Pause the debugger and choose Objects to inspect relationships.".into();
+            p.set_data(Vec::new(), Vec::new(), cx);
+        });
+        self.recursion.update(cx, |p, cx| {
+            p.status = "Run code containing recursive calls to capture a tree.".into();
+            p.set_data(Vec::new(), Vec::new(), cx);
+        });
         self.net_flashes = Arc::default();
         self.net_animation = None;
         self.profile = RunProfile::default();
@@ -209,6 +245,9 @@ impl GraphPanel {
         cx.notify();
     }
     pub fn end_run(&mut self, cx: &mut Context<Self>) {
+        if self.status.starts_with("Paused ·") {
+            self.status.clear();
+        }
         self.run_active = false;
         self.frame = Arc::default();
         self.animation = None;
@@ -355,6 +394,130 @@ impl GraphPanel {
         self.highlight();
         cx.notify();
     }
+    pub fn capture_debug(
+        &mut self,
+        root: &str,
+        frames: &[(String, usize)],
+        vars: forge_core::execution::Vars,
+        cx: &mut Context<Self>,
+    ) {
+        let stack = frames
+            .iter()
+            .filter_map(|(path, line)| forge_core::execution::frame_node(path, *line, &self.graph, root))
+            .collect::<Vec<_>>();
+        self.trail.add("paused".into(), stack.clone(), vars);
+        let view_id = |id: &str| {
+            id.strip_prefix("module:").map(str::to_owned).unwrap_or_else(|| {
+                if self.options.mode == GraphMode::Modules {
+                    forge_core::profile::module_of(id).into()
+                } else {
+                    id.into()
+                }
+            })
+        };
+        for (from, to) in self.trail.edges.keys() {
+            let (from, to) = (view_id(from), view_id(to));
+            if self.data.edges.iter().any(|e| e.from == from && e.to == to) {
+                continue;
+            }
+            if let Some((a, b)) = self.layout.nodes.get(&from).zip(self.layout.nodes.get(&to)) {
+                Arc::make_mut(&mut self.data).edges.push(forge_core::graph_view::ViewEdge {
+                    from: from.clone(),
+                    to: to.clone(),
+                    kind: "debug".into(),
+                    cyclic: false,
+                });
+                Arc::make_mut(&mut self.edges).push(DrawEdge { from, to, a: *a, b: *b, cyclic: false });
+            }
+        }
+        self.run_view = RunView::new(self.options.mode, &self.data);
+        let at = stack.first().map(|id| id.strip_prefix("module:").unwrap_or(id).to_string());
+        let calls = self
+            .trail
+            .edges
+            .iter()
+            .map(|((a, b), n)| {
+                (
+                    a.strip_prefix("module:").unwrap_or(a).to_string(),
+                    b.strip_prefix("module:").unwrap_or(b).to_string(),
+                    *n,
+                )
+            })
+            .collect();
+        self.run_active = true;
+        self.tick(TraceTick { at, calls }, true, cx);
+        if let Some(id) = self.frame.glow.clone() {
+            self.select(id, cx);
+        }
+        self.status = "Paused · live call path and local values".into();
+    }
+    pub fn show_recursion(&mut self, tree: forge_core::execution::RecTree, cx: &mut Context<Self>) {
+        self.recursion_key = Some(tree.key.clone());
+        let nodes = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| super::diagram::DiagramNode {
+                id: i.to_string(),
+                title: format!("{}({})", tree.func, n.args),
+                fields: vec![n
+                    .ret
+                    .as_ref()
+                    .map(|s| format!("→ {s}"))
+                    .unwrap_or_else(|| "Still running / no return".into())],
+                ..Default::default()
+            })
+            .collect();
+        let edges = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| n.parent >= 0)
+            .map(|(i, n)| super::diagram::DiagramEdge {
+                from: n.parent.to_string(),
+                to: i.to_string(),
+                label: "calls".into(),
+            })
+            .collect();
+        self.recursion.update(cx, |p, cx| {
+            p.status = format!("{} · {} calls ({} shown)", tree.func, tree.total, tree.nodes.len());
+            p.set_data(nodes, edges, cx);
+        });
+        if self.recursion_trees.len() < 32 || self.recursion_trees.contains_key(&tree.key) {
+            self.recursion_trees.insert(tree.key.clone(), tree);
+        }
+        cx.notify();
+    }
+    pub fn show_objects(&mut self, graph: forge_core::execution::ObjGraph, cx: &mut Context<Self>) {
+        let mut nodes = graph
+            .nodes
+            .iter()
+            .map(|n| super::diagram::DiagramNode {
+                id: n.id.clone(),
+                title: format!("{}{}", n.type_, n.len.map(|n| format!(" ({n})")).unwrap_or_default()),
+                fields: n
+                    .fields
+                    .iter()
+                    .map(|(k, v)| format!("{k} = {v}"))
+                    .chain((n.more > 0).then(|| format!("+{} more", n.more)))
+                    .collect(),
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        let mut edges = graph
+            .edges
+            .iter()
+            .map(|(a, b, label)| super::diagram::DiagramEdge { from: a.clone(), to: b.clone(), label: label.clone() })
+            .collect::<Vec<_>>();
+        for (name, id) in &graph.roots {
+            let root = format!("var:{name}");
+            nodes.push(super::diagram::DiagramNode { id: root.clone(), title: name.clone(), ..Default::default() });
+            edges.push(super::diagram::DiagramEdge { from: root, to: id.clone(), label: "references".into() });
+        }
+        self.objects.update(cx, |p, cx| p.set_data(nodes, edges, cx));
+        self.detail_mode = 1;
+        cx.notify();
+    }
     fn controls(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = cx.global::<ForgeTheme>().0.clone();
         let modes = [
@@ -373,6 +536,7 @@ impl GraphPanel {
                 .text_color(if self.options.mode == mode { t.heat_2 } else { t.fg_muted })
                 .on_click(cx.listener(move |p, _, _, cx| {
                     p.options.mode = mode;
+                    p.detail_mode = 0;
                     p.pan = (18.0, 18.0);
                     cx.emit(GraphEvent::View(p.options.clone()));
                 }))
@@ -412,6 +576,43 @@ impl GraphPanel {
             .border_color(t.border)
             .children(modes)
             .children(filters)
+            .child(
+                div()
+                    .id("graph-map")
+                    .cursor_pointer()
+                    .px(t.px(5.))
+                    .child("Map")
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(GraphEvent::Map))),
+            )
+            .when(self.recursion_trees.len() > 1, |d| {
+                d.child(
+                    div()
+                        .id("graph-recursion-next")
+                        .debug_selector(|| "graph-recursion-next".into())
+                        .cursor_pointer()
+                        .px(t.px(5.))
+                        .child("Next recursion tree")
+                        .on_click(cx.listener(|p, _, _, cx| {
+                            let keys = p.recursion_trees.keys().cloned().collect::<Vec<_>>();
+                            let i = keys.iter().position(|k| Some(k) == p.recursion_key.as_ref()).unwrap_or(0);
+                            if let Some(tree) = p.recursion_trees.get(&keys[(i + 1) % keys.len()]).cloned() {
+                                p.show_recursion(tree, cx);
+                                p.detail_mode = 2;
+                            }
+                        })),
+                )
+            })
+            .children(["Project", "Objects", "Recursion"].into_iter().enumerate().map(|(mode, label)| {
+                div().id(("graph-inspector", mode)).cursor_pointer().px(t.px(5.)).child(label).on_click(cx.listener(
+                    move |p, _, _, cx| {
+                        p.detail_mode = mode;
+                        if mode == 1 {
+                            cx.emit(GraphEvent::Objects);
+                        }
+                        cx.notify();
+                    },
+                ))
+            }))
             .child(div().min_w(t.px(100.0)).flex_1().child(Input::new(&self.query).appearance(false).cleanable(true)))
             .child(
                 div()
@@ -508,6 +709,91 @@ impl GraphPanel {
             div().text_color(t.heat_2).child(node.label.clone()).into_any_element(),
             div().text_color(t.fg_muted).child(node.detail.clone()).into_any_element(),
         ];
+        let trail_node = if self.options.mode == GraphMode::Modules {
+            self.trail
+                .stops
+                .last()
+                .and_then(|s| s.stack.first())
+                .filter(|id| forge_core::profile::module_of(id) == node.id)
+                .cloned()
+                .unwrap_or_else(|| node.id.clone())
+        } else {
+            node.id.clone()
+        };
+        let history = self.trail.history(&trail_node);
+        if !history.stops.is_empty() {
+            rows.push(
+                div()
+                    .text_color(t.heat_2)
+                    .child(format!("Variable history · pauses {:?}", history.stops))
+                    .into_any_element(),
+            );
+            for row in history.rows {
+                rows.push(
+                    div()
+                        .child(format!(
+                            "{}: {}",
+                            row.name,
+                            row.values
+                                .iter()
+                                .enumerate()
+                                .map(|(i, v)| format!(
+                                    "{}{}",
+                                    if row.changed[i] { "● " } else { "" },
+                                    v.as_deref().unwrap_or("—")
+                                ))
+                                .collect::<Vec<_>>()
+                                .join(" → ")
+                        ))
+                        .into_any_element(),
+                );
+            }
+        }
+        if let Some(last) = self.trail.stops.last() {
+            rows.push(
+                div()
+                    .text_color(t.heat_2)
+                    .child(format!(
+                        "Pause {} · {} · {}",
+                        last.n,
+                        last.reason,
+                        last.stack.first().map(String::as_str).unwrap_or("outside project")
+                    ))
+                    .into_any_element(),
+            );
+            for (name, value) in &last.vars {
+                rows.push(div().child(format!("{name} = {value}")).into_any_element());
+            }
+            if self.trail.stops.len() > 1 {
+                let chosen = self.compare_stop.unwrap_or(self.trail.stops.len() - 2).min(self.trail.stops.len() - 2);
+                let before = &self.trail.stops[chosen];
+                let diff = forge_core::execution::diff_vars(&before.vars, &last.vars);
+                rows.push(
+                    div()
+                        .id("graph-compare-pause")
+                        .debug_selector(|| "graph-compare-pause".into())
+                        .cursor_pointer()
+                        .text_color(t.link)
+                        .child(format!("Compare pause {} with {} (click for earlier)", before.n, last.n))
+                        .on_click(cx.listener(move |p, _, _, cx| {
+                            p.compare_stop =
+                                Some(chosen.checked_sub(1).unwrap_or(p.trail.stops.len().saturating_sub(2)));
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                );
+                rows.push(
+                    div()
+                        .child(format!(
+                            "Added: {} · Removed: {} · Changed: {}",
+                            diff.added.join(", "),
+                            diff.removed.join(", "),
+                            diff.changed.join(", ")
+                        ))
+                        .into_any_element(),
+                );
+            }
+        }
         if node.unused {
             rows.push(
                 div()
@@ -655,6 +941,25 @@ fn module_of_node(n: &forge_core::graph_view::ViewNode) -> &str {
 impl Render for GraphPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.global::<ForgeTheme>().0.clone();
+        if self.detail_mode == 3 {
+            return div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .bg(t.bg_panel)
+                .text_color(t.fg)
+                .child(self.controls(cx))
+                .child(div().flex_1().min_h_0().child(self.project_map.clone()));
+        }
+        if self.detail_mode > 0 {
+            return div().size_full().flex().flex_col().bg(t.bg_panel).text_color(t.fg).child(self.controls(cx)).child(
+                div().flex_1().min_h_0().child(if self.detail_mode == 1 {
+                    self.objects.clone()
+                } else {
+                    self.recursion.clone()
+                }),
+            );
+        }
         let scale = self.zoom * t.ui_scale;
         let pan = self.pan;
         let measured = self.view_size.get();
@@ -776,10 +1081,31 @@ impl Render for GraphPanel {
                                     .text_ellipsis()
                                     .whitespace_nowrap()
                                     .child(
-                                        self.times
-                                            .get(&n.id)
-                                            .map(|time| format!("{} · {} own", n.detail, format_ms(time.self_ms)))
-                                            .unwrap_or_else(|| n.detail.clone()),
+                                        self.trail
+                                            .stops
+                                            .last()
+                                            .filter(|_| self.status.starts_with("Paused ·"))
+                                            .filter(|s| {
+                                                s.stack.first().is_some_and(|id| {
+                                                    id == &n.id || forge_core::profile::module_of(id) == n.id
+                                                })
+                                            })
+                                            .map(|s| {
+                                                s.vars
+                                                    .iter()
+                                                    .take(2)
+                                                    .map(|(k, v)| format!("{k}={v}"))
+                                                    .collect::<Vec<_>>()
+                                                    .join(" · ")
+                                            })
+                                            .unwrap_or_else(|| {
+                                                self.times
+                                                    .get(&n.id)
+                                                    .map(|time| {
+                                                        format!("{} · {} own", n.detail, format_ms(time.self_ms))
+                                                    })
+                                                    .unwrap_or_else(|| n.detail.clone())
+                                            }),
                                     ),
                             )
                         })

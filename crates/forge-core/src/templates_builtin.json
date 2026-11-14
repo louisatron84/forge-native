@@ -1,0 +1,202 @@
+[
+  {
+    "id": "script",
+    "name": "Script",
+    "detail": "One Python file to start from",
+    "open": "main.py",
+    "files": [
+      {
+        "path": "main.py",
+        "content": "\"\"\"{{title}}.\"\"\"\n\n\ndef main() -> None:\n    print(\"Hello from {{name}}!\")\n\n\nif __name__ == \"__main__\":\n    main()\n"
+      },
+      {
+        "path": "README.md",
+        "content": "# {{title}}\n\nA Python script.\n\n## Run it\n\nOpen `main.py` and press F5 (or Ctrl+F5 to run without debugging).\n"
+      },
+      {
+        "path": ".gitignore",
+        "content": "__pycache__/\n*.pyc\n.venv/\nvenv/\n.env\n.pytest_cache/\ndist/\nbuild/\n*.egg-info/\n"
+      }
+    ]
+  },
+  {
+    "id": "cli",
+    "name": "Command-line tool",
+    "detail": "Arguments with argparse, and tests",
+    "open": "{{module}}.py",
+    "files": [
+      {
+        "path": "{{module}}.py",
+        "content": "\"\"\"{{title}}: a command-line tool.\"\"\"\nimport argparse\n\n\ndef greet(name: str, shout: bool = False) -> str:\n    text = f\"Hello, {name}!\"\n    return text.upper() if shout else text\n\n\ndef main(argv: list[str] | None = None) -> int:\n    parser = argparse.ArgumentParser(description=\"{{title}}\")\n    parser.add_argument(\"name\", help=\"who to greet\")\n    parser.add_argument(\"--shout\", action=\"store_true\", help=\"say it loudly\")\n    args = parser.parse_args(argv)\n    print(greet(args.name, args.shout))\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n"
+      },
+      {
+        "path": "tests/test_{{module}}.py",
+        "content": "import sys\nfrom pathlib import Path\n\nsys.path.insert(0, str(Path(__file__).resolve().parent.parent))\n\nfrom {{module}} import greet, main  # noqa: E402\n\n\ndef test_greet():\n    assert greet(\"Ada\") == \"Hello, Ada!\"\n\n\ndef test_shout():\n    assert greet(\"Ada\", shout=True) == \"HELLO, ADA!\"\n\n\ndef test_main(capsys):\n    assert main([\"Ada\"]) == 0\n    assert capsys.readouterr().out == \"Hello, Ada!\\n\"\n"
+      },
+      {
+        "path": "requirements.txt",
+        "content": "pytest\n"
+      },
+      {
+        "path": ".forge/run.json",
+        "content": "{\n  \"configurations\": [\n    {\n      \"args\": [\n        \"Ada\"\n      ],\n      \"env\": {},\n      \"name\": \"{{module}} Ada\",\n      \"file\": \"{{module}}.py\"\n    }\n  ],\n  \"tasks\": []\n}\n"
+      },
+      {
+        "path": "README.md",
+        "content": "# {{title}}\n\nA command-line tool.\n\n## Run it\n\nChoose the \"{{module}} Ada\" run configuration and press F5, or in the terminal:\n\n    python {{module}}.py Ada --shout\n\nTests: open the Tests panel and run them all (they use pytest).\n"
+      },
+      {
+        "path": ".gitignore",
+        "content": "__pycache__/\n*.pyc\n.venv/\nvenv/\n.env\n.pytest_cache/\ndist/\nbuild/\n*.egg-info/\n"
+      }
+    ]
+  },
+  {
+    "id": "fastapi",
+    "name": "Web API (FastAPI)",
+    "detail": "A small JSON API with routes and tests",
+    "open": "app/main.py",
+    "files": [
+      {
+        "path": "app/__init__.py",
+        "content": ""
+      },
+      {
+        "path": "app/main.py",
+        "content": "\"\"\"{{title}}: a web API.\"\"\"\nfrom fastapi import FastAPI, HTTPException\nfrom pydantic import BaseModel\n\napp = FastAPI(title=\"{{title}}\")\n\n\nclass Item(BaseModel):\n    name: str\n    price: float\n\n\nITEMS: dict[int, Item] = {1: Item(name=\"Teapot\", price=12.5)}\n\n\n@app.get(\"/\")\ndef home() -> dict[str, str]:\n    return {\"message\": \"Hello from {{name}}\"}\n\n\n@app.get(\"/items/{item_id}\")\ndef get_item(item_id: int) -> Item:\n    if item_id not in ITEMS:\n        raise HTTPException(status_code=404, detail=\"No such item\")\n    return ITEMS[item_id]\n\n\n@app.post(\"/items\")\ndef add_item(item: Item) -> dict[str, int]:\n    item_id = max(ITEMS, default=0) + 1\n    ITEMS[item_id] = item\n    return {\"id\": item_id}\n"
+      },
+      {
+        "path": "tests/test_main.py",
+        "content": "from fastapi.testclient import TestClient\n\nfrom app.main import app\n\nclient = TestClient(app)\n\n\ndef test_home():\n    assert client.get(\"/\").json() == {\"message\": \"Hello from {{name}}\"}\n\n\ndef test_missing_item():\n    assert client.get(\"/items/999\").status_code == 404\n"
+      },
+      {
+        "path": "requirements.txt",
+        "content": "fastapi\nuvicorn\nhttpx\npytest\n"
+      },
+      {
+        "path": ".forge/run.json",
+        "content": "{\n  \"configurations\": [\n    {\n      \"args\": [\n        \"app.main:app\",\n        \"--reload\"\n      ],\n      \"env\": {},\n      \"name\": \"Web server\",\n      \"module\": \"uvicorn\"\n    }\n  ],\n  \"tasks\": []\n}\n"
+      },
+      {
+        "path": "README.md",
+        "content": "# {{title}}\n\nA web API made with FastAPI.\n\n## Run it\n\nChoose the \"Web server\" run configuration and press F5, then open http://127.0.0.1:8000/docs to try the API.\n"
+      },
+      {
+        "path": ".gitignore",
+        "content": "__pycache__/\n*.pyc\n.venv/\nvenv/\n.env\n.pytest_cache/\ndist/\nbuild/\n*.egg-info/\n"
+      }
+    ]
+  },
+  {
+    "id": "flask",
+    "name": "Web app (Flask)",
+    "detail": "Pages from templates, and a form",
+    "open": "app.py",
+    "files": [
+      {
+        "path": "app.py",
+        "content": "\"\"\"{{title}}: a web app.\"\"\"\nfrom flask import Flask, render_template, request\n\napp = Flask(__name__)\nNOTES: list[str] = []\n\n\n@app.route(\"/\", methods=[\"GET\", \"POST\"])\ndef index():\n    if request.method == \"POST\" and request.form.get(\"note\"):\n        NOTES.append(request.form[\"note\"])\n    return render_template(\"index.html\", notes=NOTES)\n\n\nif __name__ == \"__main__\":\n    app.run(debug=True)\n"
+      },
+      {
+        "path": "templates/index.html",
+        "content": "<!doctype html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>{{title}}</title></head>\n<body>\n  <h1>{{title}}</h1>\n  <form method=\"post\"><input name=\"note\" placeholder=\"Write a note\"> <button>Add</button></form>\n  <ul>{% for note in notes %}<li>{{ note }}</li>{% endfor %}</ul>\n</body>\n</html>\n"
+      },
+      {
+        "path": "requirements.txt",
+        "content": "flask\n"
+      },
+      {
+        "path": "README.md",
+        "content": "# {{title}}\n\nA web app made with Flask.\n\n## Run it\n\nOpen `app.py` and press F5, then open http://127.0.0.1:5000.\n"
+      },
+      {
+        "path": ".gitignore",
+        "content": "__pycache__/\n*.pyc\n.venv/\nvenv/\n.env\n.pytest_cache/\ndist/\nbuild/\n*.egg-info/\n"
+      }
+    ]
+  },
+  {
+    "id": "data",
+    "name": "Data analysis",
+    "detail": "Read a CSV with pandas, summarise it, save the result",
+    "open": "analysis.py",
+    "files": [
+      {
+        "path": "analysis.py",
+        "content": "\"\"\"{{title}}: a data analysis.\"\"\"\nfrom pathlib import Path\n\nimport pandas as pd\n\nDATA = Path(__file__).parent / \"data\"\n\n\ndef load() -> pd.DataFrame:\n    return pd.read_csv(DATA / \"sales.csv\", parse_dates=[\"date\"])\n\n\ndef by_product(sales: pd.DataFrame) -> pd.DataFrame:\n    sales = sales.assign(total=sales[\"quantity\"] * sales[\"price\"])\n    return sales.groupby(\"product\", as_index=False)[\"total\"].sum().sort_values(\"total\", ascending=False)\n\n\ndef main() -> None:\n    summary = by_product(load())\n    print(summary.to_string(index=False))\n    summary.to_csv(DATA / \"summary.csv\", index=False)\n\n\nif __name__ == \"__main__\":\n    main()\n"
+      },
+      {
+        "path": "data/sales.csv",
+        "content": "date,product,quantity,price\n2026-01-03,Teapot,2,12.50\n2026-01-04,Mug,6,4.00\n2026-01-04,Teapot,1,12.50\n2026-01-07,Kettle,1,30.00\n2026-01-09,Mug,3,4.00\n"
+      },
+      {
+        "path": "requirements.txt",
+        "content": "pandas\n"
+      },
+      {
+        "path": "README.md",
+        "content": "# {{title}}\n\nA data analysis with pandas. Open the Pipeline panel on `by_product` to see the data at each step.\n\n## Run it\n\nOpen `analysis.py` and press F5. It writes `data/summary.csv`.\n"
+      },
+      {
+        "path": ".gitignore",
+        "content": "__pycache__/\n*.pyc\n.venv/\nvenv/\n.env\n.pytest_cache/\ndist/\nbuild/\n*.egg-info/\n"
+      }
+    ]
+  },
+  {
+    "id": "tkinter",
+    "name": "Desktop app (Tkinter)",
+    "detail": "A window with a button, no packages to install",
+    "open": "app.py",
+    "files": [
+      {
+        "path": "app.py",
+        "content": "\"\"\"{{title}}: a desktop app.\"\"\"\nimport tkinter as tk\n\n\nclass App(tk.Tk):\n    def __init__(self) -> None:\n        super().__init__()\n        self.title(\"{{title}}\")\n        self.count = 0\n        self.label = tk.Label(self, text=\"Clicked 0 times\", padx=40, pady=20)\n        self.label.pack()\n        tk.Button(self, text=\"Click me\", command=self.clicked).pack(pady=(0, 20))\n\n    def clicked(self) -> None:\n        self.count += 1\n        self.label.config(text=f\"Clicked {self.count} times\")\n\n\nif __name__ == \"__main__\":\n    App().mainloop()\n"
+      },
+      {
+        "path": "README.md",
+        "content": "# {{title}}\n\nA desktop app made with Tkinter (part of Python).\n\n## Run it\n\nOpen `app.py` and press F5.\n"
+      },
+      {
+        "path": ".gitignore",
+        "content": "__pycache__/\n*.pyc\n.venv/\nvenv/\n.env\n.pytest_cache/\ndist/\nbuild/\n*.egg-info/\n"
+      }
+    ]
+  },
+  {
+    "id": "package",
+    "name": "Package with tests",
+    "detail": "A pyproject.toml package in src/, with pytest",
+    "open": "src/{{module}}/core.py",
+    "files": [
+      {
+        "path": "pyproject.toml",
+        "content": "[build-system]\nrequires = [\"setuptools>=68\"]\nbuild-backend = \"setuptools.build_meta\"\n\n[project]\nname = \"{{module}}\"\nversion = \"0.1.0\"\ndescription = \"{{title}}\"\nrequires-python = \">=3.10\"\n\n[project.optional-dependencies]\ntest = [\"pytest\"]\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n"
+      },
+      {
+        "path": "src/{{module}}/__init__.py",
+        "content": "\"\"\"{{title}}.\"\"\"\nfrom .core import add\n\n__all__ = [\"add\"]\n"
+      },
+      {
+        "path": "src/{{module}}/core.py",
+        "content": "def add(a: float, b: float) -> float:\n    \"\"\"Add two numbers.\"\"\"\n    return a + b\n"
+      },
+      {
+        "path": "tests/test_core.py",
+        "content": "from {{module}} import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"
+      },
+      {
+        "path": "requirements.txt",
+        "content": "-e .[test]\n"
+      },
+      {
+        "path": "README.md",
+        "content": "# {{title}}\n\nA Python package.\n\n## Run it\n\nInstall it into the project's .venv (Forge offers to), then run the tests from the Tests panel.\n"
+      },
+      {
+        "path": ".gitignore",
+        "content": "__pycache__/\n*.pyc\n.venv/\nvenv/\n.env\n.pytest_cache/\ndist/\nbuild/\n*.egg-info/\n"
+      }
+    ]
+  }
+]

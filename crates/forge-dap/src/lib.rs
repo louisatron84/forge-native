@@ -196,6 +196,9 @@ fn transport(
                     client.receive(value);
                 }
             }
+            if frames.is_failed() {
+                break;
+            }
         }
         if let Some(client) = weak.upgrade() {
             client.closed("Debugger connection closed");

@@ -3,11 +3,14 @@
 
 pub mod connect;
 pub mod debug;
+pub mod diagram;
 pub mod files;
 pub mod git;
 pub mod git_inspect;
 pub mod graph;
 pub mod lsp_views;
+pub mod memory;
+pub mod navigation;
 pub mod network;
 pub mod openapi;
 pub mod output;

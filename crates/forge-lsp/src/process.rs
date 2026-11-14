@@ -118,6 +118,12 @@ impl ServerProcess {
                     for m in reader.feed(&buf[..n]) {
                         client.handle_message(m);
                     }
+                    if reader.is_failed() {
+                        if let Ok(mut child) = child.lock() {
+                            let _ = child.kill();
+                        }
+                        break;
+                    }
                 }
                 client.dispose("the language server stopped");
                 let code = child.lock().ok().and_then(|mut c| c.wait().ok()).and_then(|s| s.code());

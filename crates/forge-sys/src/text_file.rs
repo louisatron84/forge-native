@@ -3,7 +3,7 @@
 //! files, and refuses files too big to open. Replaces `src/main/textFile.ts`.
 
 use forge_text::encoding::{Encoding, HUGE_FILE_BYTES, MAX_FILE_BYTES};
-use std::io;
+use std::io::{self, Write};
 use std::path::Path;
 
 /// What reading a file for the editor gave.
@@ -127,21 +127,35 @@ pub fn write_text_file(path: &Path, text: &str, encoding: Encoding) -> io::Resul
         std::fs::create_dir_all(dir)?;
     }
     let bytes = encode(text, encoding);
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
-    let temp = path.with_file_name(format!(".{name}.forge-save-{}", std::process::id()));
-    match std::fs::write(&temp, &bytes).and_then(|_| std::fs::rename(&temp, path)) {
-        Ok(()) => Ok(()),
-        Err(_) => {
-            // Some folders don't allow the rename (synced or locked files): write in place instead.
-            let _ = std::fs::remove_file(&temp);
-            std::fs::write(path, &bytes)
-        }
+    let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+    // Exclusive, unpredictable creation avoids following a planted symlink/hardlink.
+    // Keep the old file intact if writing or replacement fails.
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    temp.write_all(&bytes)?;
+    if let Ok(metadata) = std::fs::metadata(path) {
+        temp.as_file().set_permissions(metadata.permissions())?;
     }
+    temp.persist(path).map(|_| ()).map_err(|e| e.error)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saving_never_overwrites_a_preexisting_temporary_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let victim = outside.path().join("private.txt");
+        std::fs::write(&victim, "keep private data").unwrap();
+        let trap = dir.path().join(format!(".main.py.forge-save-{}", std::process::id()));
+        std::fs::hard_link(&victim, &trap).unwrap();
+        let target = dir.path().join("main.py");
+        write_text_file(&target, "print('hello')", Encoding::Utf8).unwrap();
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep private data");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "print('hello')");
+        assert_eq!(std::fs::read_to_string(&trap).unwrap(), "keep private data");
+    }
 
     #[test]
     fn reads_plain_utf8() {

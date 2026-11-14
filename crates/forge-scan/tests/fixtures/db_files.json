@@ -1,0 +1,7 @@
+{
+  "models_sa.py": "from sqlalchemy import ForeignKey, String, create_engine\nfrom sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship\n\nclass Base(DeclarativeBase):\n    pass\n\nclass User(Base):\n    __tablename__ = \"users\"\n    id: Mapped[int] = mapped_column(primary_key=True)\n    name: Mapped[str] = mapped_column(String(50))\n    posts: Mapped[list[\"Post\"]] = relationship(back_populates=\"author\")\n\nclass Post(Base):\n    __tablename__ = \"posts\"\n    id: Mapped[int] = mapped_column(primary_key=True)\n    author_id: Mapped[int] = mapped_column(ForeignKey(\"users.id\"))\n    author: Mapped[\"User\"] = relationship(back_populates=\"posts\")\n\nengine = create_engine(\"postgresql://app:hunter2@db.example.com/blog\")\n\ndef newest():\n    return Post.id",
+  "shop/__init__.py": "",
+  "shop/models.py": "from django.db import models\n\nclass Customer(models.Model):\n    email = models.EmailField(unique=True)\n\nclass Order(models.Model):\n    customer = models.ForeignKey(Customer, on_delete=models.CASCADE)\n    items = models.ManyToManyField(\"Product\")\n\nclass Product(models.Model):\n    title = models.CharField(max_length=100)",
+  "legacy.py": "import sqlite3\n\ndef setup():\n    con = sqlite3.connect(\"notes.db\")\n    con.executescript(\"\"\"\n        CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL, tag_id INTEGER REFERENCES tags(id));\n        CREATE TABLE tags (id INTEGER PRIMARY KEY, label TEXT);\n    \"\"\")\n    return con",
+  "plain.py": "def add(a, b):\n    return a + b\n"
+}

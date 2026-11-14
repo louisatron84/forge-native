@@ -10,7 +10,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, OnceLock,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 pub const TRACE_SCRIPT: &str = include_str!("../../../python/runTrace.py");
 
@@ -66,7 +66,9 @@ impl TraceServer {
                     }
                     Err(_) => return,
                 };
-                if stream.set_read_timeout(Some(Duration::from_millis(50))).is_err() {
+                if stream.set_nonblocking(false).is_err()
+                    || stream.set_read_timeout(Some(Duration::from_millis(50))).is_err()
+                {
                     continue;
                 }
                 if let Ok(mut slot) = connection.lock() {
@@ -74,25 +76,35 @@ impl TraceServer {
                 }
                 let mut pending = Vec::new();
                 let mut trusted = false;
+                let accepted = Instant::now();
                 let mut chunk = [0; 8192];
                 while !done.load(Ordering::Acquire) {
+                    if !trusted && accepted.elapsed() >= Duration::from_secs(1) {
+                        break;
+                    }
                     let count = match stream.read(&mut chunk) {
                         Ok(0) => break,
                         Ok(n) => n,
                         Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => continue,
                         Err(_) => break,
                     };
+                    let mut search = pending.len();
                     pending.extend_from_slice(&chunk[..count]);
                     if pending.len() > 4_000_000 {
                         break;
                     }
                     let mut cursor = 0;
                     let mut reject = false;
-                    while let Some(offset) = pending[cursor..].iter().position(|b| *b == b'\n') {
-                        let end = cursor + offset;
+                    while let Some(offset) = pending[search..].iter().position(|b| *b == b'\n') {
+                        let end = search + offset;
                         let message = serde_json::from_slice::<Value>(&pending[cursor..end]);
                         cursor = end + 1;
+                        search = cursor;
                         let Ok(message) = message else {
+                            if !trusted {
+                                reject = true;
+                                break;
+                            }
                             continue;
                         };
                         if !trusted {
@@ -115,6 +127,9 @@ impl TraceServer {
                     }
                     if cursor > 0 {
                         pending.drain(..cursor);
+                    }
+                    if !trusted && pending.len() > 4096 {
+                        break;
                     }
                 }
                 if let Ok(mut slot) = connection.lock() {
@@ -151,6 +166,18 @@ impl Drop for TraceServer {
 mod tests {
     use super::*;
     use std::process::Command;
+    #[test]
+    fn idle_unauthenticated_client_does_not_block_the_real_tracer() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let server = TraceServer::open(move |v| {
+            let _ = tx.send(v);
+        })
+        .unwrap();
+        let _idle = TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, server.port)).unwrap();
+        let mut real = TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, server.port)).unwrap();
+        writeln!(real, "{}", serde_json::json!({"t":"hello","token":server.token})).unwrap();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(3)).expect("idle client held the listener")["t"], "hello");
+    }
     #[test]
     fn authenticates_messages_and_ignores_junk() {
         let (tx, rx) = std::sync::mpsc::channel();

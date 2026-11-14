@@ -3,6 +3,375 @@ use super::*;
 use gpui_kit::{TestAppContext, VisualTestContext};
 
 #[gpui_kit::test]
+fn project_map_keyboard_navigation_and_file_context_panels_follow_the_open_file(cx: &mut TestAppContext) {
+    if forge_run::python::find_python(std::path::Path::new("."), None).is_none() {
+        return;
+    }
+    cx.executor().allow_parking();
+    let (_data, ws, cx) = setup(cx);
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("pkg")).unwrap();
+    std::fs::write(dir.path().join("pkg/__init__.py"), "").unwrap();
+    std::fs::write(dir.path().join("pkg/worker.py"), "def run():\n    return 1\n").unwrap();
+    std::fs::write(dir.path().join("main.py"), "from pkg.worker import run\ndef main():\n    return run()\nmain()\n")
+        .unwrap();
+    ws.update_in(cx, |ws, window, cx| {
+        ws.open_folder(dir.path().into(), window, cx);
+        ws.open_path(dir.path().join("main.py"), window, cx);
+        ws.run_command("nav.projectMap", window, cx);
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        cx.run_until_parked();
+        if ws.read_with(cx, |ws, cx| {
+            ws.project_graph.read(cx).project_map.read(cx).files.iter().any(|(p, _)| p == "pkg/worker.py")
+        }) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "Project map command is not connected to analysis");
+        std::thread::sleep(Duration::from_millis(10));
+        cx.executor().advance_clock(Duration::from_millis(40));
+    }
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    ws.read_with(cx, |ws, cx| {
+        assert_eq!(ws.project_graph.read(cx).detail_mode, 0, "Escape should leave the Project Map")
+    });
+    ws.update_in(cx, |ws, window, cx| ws.run_command("nav.projectMap", window, cx));
+    cx.simulate_input("worker");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    ws.update(cx, |ws, cx| {
+        ws.reveal_panel("where", cx);
+        ws.panel_view("where", cx);
+        ws.panel_view("infile", cx);
+    });
+    cx.run_until_parked();
+    ws.read_with(cx, |ws, cx| {
+        assert!(ws.active_doc().unwrap().read(cx).doc.path().ends_with("worker.py"));
+        assert!(ws.where_panel.read(cx).rows.iter().any(|r| r.label == "main"));
+        assert!(ws.infile.read(cx).rows.iter().any(|r| r.label.contains("run")));
+        assert!(ws.infile.read(cx).rows.iter().any(|r| r.detail.contains("used by main")));
+    });
+}
+
+#[gpui_kit::test]
+fn traced_recursive_functions_have_inspectable_switchable_native_trees(cx: &mut TestAppContext) {
+    if forge_run::python::find_python(std::path::Path::new("."), None).is_none() {
+        return;
+    }
+    cx.executor().allow_parking();
+    let (_data, ws, cx) = setup(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("main.py");
+    std::fs::write(&file,"def factorial(n):\n    return 1 if n < 2 else n * factorial(n - 1)\ndef fib(n):\n    return n if n < 2 else fib(n - 1) + fib(n - 2)\nprint(factorial(4),fib(4))\n").unwrap();
+    ws.update_in(cx, |ws, window, cx| {
+        ws.open_folder(dir.path().into(), window, cx);
+        ws.open_path(file, window, cx);
+        ws.run_command("view.projectGraph", window, cx);
+        ws.run_command("run.file", window, cx);
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        cx.run_until_parked();
+        if ws.read_with(cx, |ws, cx| ws.run.current.is_none() && ws.project_graph.read(cx).recursion_trees.len() >= 2) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "Traced recursion did not reach graph");
+        std::thread::sleep(Duration::from_millis(10));
+        cx.executor().advance_clock(Duration::from_millis(30));
+    }
+    let before = ws.read_with(cx, |ws, cx| ws.project_graph.read(cx).recursion.read(cx).nodes[0].title.clone());
+    ws.update(cx, |ws, cx| {
+        ws.project_graph.update(cx, |p, cx| {
+            p.detail_mode = 2;
+            cx.notify();
+        })
+    });
+    cx.run_until_parked();
+    let next =
+        cx.debug_bounds("graph-recursion-next").expect("Every recorded recursive function needs to be inspectable");
+    cx.simulate_click(next.center(), Default::default());
+    cx.run_until_parked();
+    ws.read_with(cx, |ws, cx| {
+        let panel = ws.project_graph.read(cx).recursion.read(cx);
+        assert_ne!(panel.nodes[0].title, before);
+        assert!(panel.nodes.iter().any(|n| n.fields.iter().any(|s| s.starts_with('→'))));
+        assert!(!panel.edges.is_empty());
+    });
+}
+
+#[gpui_kit::test]
+fn project_and_run_changes_clear_object_and_recursion_snapshots(cx: &mut TestAppContext) {
+    let (_data, ws, cx) = setup(cx);
+    let dir = tempfile::tempdir().unwrap();
+    ws.update_in(cx, |ws, window, cx| {
+        let panel = ws.project_graph.clone();
+        panel.update(cx, |p, cx| {
+            p.show_objects(
+                forge_core::execution::ObjGraph {
+                    roots: vec![("head".into(), "1".into())],
+                    nodes: vec![forge_core::execution::ObjNode {
+                        id: "1".into(),
+                        type_: "PreviousProject".into(),
+                        ..Default::default()
+                    }],
+                    edges: Vec::new(),
+                },
+                cx,
+            );
+            p.show_recursion(
+                forge_core::execution::RecTree {
+                    key: "old:f#1".into(),
+                    func: "old:f".into(),
+                    total: 1,
+                    nodes: vec![forge_core::execution::RecNode { parent: -1, args: "private".into(), ret: None }],
+                },
+                cx,
+            );
+        });
+        ws.open_folder(dir.path().into(), window, cx);
+    });
+    cx.run_until_parked();
+    ws.read_with(cx, |ws, cx| {
+        let p = ws.project_graph.read(cx);
+        assert!(p.objects.read(cx).nodes.is_empty(), "Previous-project object snapshots must be released");
+        assert!(p.recursion.read(cx).nodes.is_empty(), "Previous-project recursion snapshots must be released");
+    });
+}
+
+#[gpui_kit::test]
+fn templates_create_a_project_save_it_and_offer_the_user_copy(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (data, ws, cx) = setup(cx);
+    let parent = tempfile::tempdir().unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    ws.update_in(cx, |ws, window, cx| ws.run_command("file.newProject", window, cx));
+    loop {
+        cx.run_until_parked();
+        if ws.read_with(cx, |ws, cx| ws.palette.read(cx).is_open()) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    cx.simulate_input("Script");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    cx.simulate_path_prompt_response(|options| {
+        assert!(options.directories);
+        Some(vec![parent.path().into()])
+    });
+    cx.run_until_parked();
+    cx.simulate_input("Demo One");
+    cx.simulate_keystrokes("enter");
+    loop {
+        cx.run_until_parked();
+        if ws.read_with(cx, |ws, _| {
+            ws.root.as_ref().is_some_and(|r| r.ends_with("Demo One")) && ws.tabs.active().is_some()
+        }) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "Template did not create/open project");
+        std::thread::sleep(Duration::from_millis(10));
+        cx.executor().advance_clock(Duration::from_millis(20));
+    }
+    assert!(parent.path().join("Demo One/main.py").exists());
+    ws.update_in(cx, |ws, window, cx| ws.run_command("file.saveTemplate", window, cx));
+    cx.simulate_input("My Starter");
+    cx.simulate_keystrokes("enter");
+    loop {
+        cx.run_until_parked();
+        if !forge_sys::templates::list_user_templates(&data.path().join("templates")).is_empty() {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "User template was not saved");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    ws.update_in(cx, |ws, window, cx| ws.run_command("file.newProject", window, cx));
+    loop {
+        cx.run_until_parked();
+        if ws.read_with(cx, |ws, cx| ws.palette.read(cx).is_open()) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    cx.simulate_input("My Starter");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    cx.simulate_path_prompt_response(|_| Some(vec![parent.path().into()]));
+    cx.run_until_parked();
+    cx.simulate_input("Rain Alert");
+    cx.simulate_keystrokes("enter");
+    loop {
+        cx.run_until_parked();
+        if parent.path().join("Rain Alert/main.py").exists() {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "Saved template not offered in picker");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(std::fs::read_to_string(parent.path().join("Rain Alert/main.py")).unwrap().contains("Rain Alert"));
+}
+
+#[gpui_kit::test]
+fn database_diagram_reads_schema_and_navigates_to_model_source(cx: &mut TestAppContext) {
+    if forge_run::python::find_python(std::path::Path::new("."), None).is_none() {
+        return;
+    }
+    cx.executor().allow_parking();
+    let (_data, ws, cx) = setup(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("models.py");
+    std::fs::write(&path,"from sqlalchemy import Column, Integer, ForeignKey\nfrom sqlalchemy.orm import declarative_base\nBase = declarative_base()\nclass User(Base):\n    __tablename__ = 'users'\n    id = Column(Integer, primary_key=True)\nclass Post(Base):\n    __tablename__ = 'posts'\n    id = Column(Integer, primary_key=True)\n    author_id = Column(Integer, ForeignKey('users.id'))\n").unwrap();
+    ws.update_in(cx, |ws, window, cx| {
+        ws.open_folder(dir.path().into(), window, cx);
+        ws.run_command("view.database", window, cx);
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        cx.run_until_parked();
+        if ws.read_with(cx, |ws, cx| ws.database.read(cx).nodes.iter().any(|n| n.id == "posts")) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "Schema did not reach the native diagram");
+        std::thread::sleep(Duration::from_millis(10));
+        cx.executor().advance_clock(Duration::from_millis(30));
+    }
+    ws.read_with(cx, |ws, cx| {
+        let d = ws.database.read(cx);
+        assert!(d.edges.iter().any(|e| e.from == "posts" && e.to == "users"));
+        assert!(d.nodes.iter().find(|n| n.id == "posts").unwrap().fields.iter().any(|s| s.contains("author_id")));
+    });
+    let node = cx.debug_bounds("diagram-node-posts").unwrap();
+    cx.simulate_click(node.center(), Default::default());
+    cx.run_until_parked();
+    let open = cx.debug_bounds("diagram-source").unwrap();
+    cx.simulate_click(open.center(), Default::default());
+    cx.run_until_parked();
+    ws.read_with(cx, |ws, cx| assert_eq!(ws.active_doc().unwrap().read(cx).doc.path(), path.to_string_lossy()));
+}
+
+#[gpui_kit::test]
+fn memory_run_captures_allocations_types_and_retained_paths(cx: &mut TestAppContext) {
+    if forge_run::python::find_python(std::path::Path::new("."), None).is_none() {
+        return;
+    }
+    cx.executor().allow_parking();
+    let (_data, ws, cx) = setup(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mem.py");
+    std::fs::write(&path,"import time\nclass Item:\n    def __init__(self,n):\n        self.n=n\n        self.data=[n]*50\nCACHE=[]\nfor i in range(2000):\n    CACHE.append(Item(i))\n    if i % 500 == 0:\n        time.sleep(0.15)\nprint(len(CACHE))\n").unwrap();
+    ws.update_in(cx, |ws, window, cx| {
+        ws.open_folder(dir.path().into(), window, cx);
+        ws.open_path(path, window, cx);
+        ws.run_command("run.memory", window, cx);
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(25);
+    loop {
+        cx.run_until_parked();
+        if ws.read_with(cx, |ws, cx| ws.run.current.is_none() && ws.memory.read(cx).log.count("mem.Item") == 2000.) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "Memory records did not reach native panel");
+        std::thread::sleep(Duration::from_millis(10));
+        cx.executor().advance_clock(Duration::from_millis(40));
+    }
+    ws.read_with(cx, |ws, cx| {
+        let log = &ws.memory.read(cx).log;
+        assert!(log.peak > 100_000.);
+        assert!(log.samples.len() > 3);
+        assert!(log.sites.iter().any(|s| s.path == "mem.py"));
+        assert!(log
+            .kept
+            .iter()
+            .any(|k| k.type_ == "mem.Item" && k.count == 2000. && k.path.iter().any(|s| s == "mem.CACHE")));
+        assert!(!log.running);
+    });
+}
+
+#[gpui_kit::test]
+fn debugger_graph_records_locals_history_and_shared_objects(cx: &mut TestAppContext) {
+    if !std::process::Command::new("python").args(["-c", "import debugpy"]).status().is_ok_and(|s| s.success()) {
+        return;
+    }
+    cx.executor().allow_parking();
+    let (_data, ws, cx) = setup(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("main.py");
+    std::fs::write(&path,"class Node:\n    def __init__(self,value):\n        self.value=value\ndef work():\n    head=Node(1)\n    tail=Node(2)\n    head.next=tail\n    items=[head,tail]\n    total=1\n    total=2\n    return total\nwork()\n").unwrap();
+    ws.update_in(cx, |ws, window, cx| {
+        ws.open_folder(dir.path().into(), window, cx);
+        ws.open_path(path.clone(), window, cx);
+        ws.run_command("view.projectGraph", window, cx);
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(35);
+    loop {
+        cx.run_until_parked();
+        if ws.read_with(cx, |ws, cx| ws.project_graph.read(cx).graph.modules.iter().any(|m| m.id == "main")) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(10));
+        cx.executor().advance_clock(Duration::from_millis(40));
+    }
+    ws.update_in(cx, |ws, window, cx| {
+        ws.debug.breakpoints.toggle(&path.to_string_lossy(), 9);
+        ws.start_debug(window, cx);
+    });
+    loop {
+        cx.run_until_parked();
+        if ws.read_with(cx, |ws, cx| {
+            ws.project_graph.read(cx).trail.stops.last().is_some_and(|s| s.vars.get("total").is_some_and(|v| v == "1"))
+        }) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "Graph did not capture debugger locals");
+        std::thread::sleep(Duration::from_millis(20));
+        cx.executor().advance_clock(Duration::from_millis(30));
+    }
+    ws.update_in(cx, |ws, window, cx| ws.inspect_debug_objects(window, cx));
+    loop {
+        cx.run_until_parked();
+        if ws.read_with(cx, |ws, cx| {
+            ws.project_graph.read(cx).objects.read(cx).nodes.iter().filter(|n| n.title == "Node").count() == 2
+        }) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "Shared objects were not inspected");
+        std::thread::sleep(Duration::from_millis(15));
+        cx.executor().advance_clock(Duration::from_millis(30));
+    }
+    ws.update_in(cx, |ws, window, cx| ws.debug_control("next", window, cx));
+    loop {
+        cx.run_until_parked();
+        if ws.read_with(cx, |ws, cx| {
+            ws.project_graph.read(cx).trail.stops.last().is_some_and(|s| s.vars.get("total").is_some_and(|v| v == "2"))
+        }) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "Graph did not track variable change");
+        std::thread::sleep(Duration::from_millis(15));
+        cx.executor().advance_clock(Duration::from_millis(30));
+    }
+    ws.read_with(cx, |ws, cx| {
+        let p = ws.project_graph.read(cx);
+        assert!(p.trail.edges.contains_key(&("module:main".into(), "main:work".into())));
+        let h = p.trail.history("main:work");
+        assert!(h.rows.iter().find(|r| r.name == "total").unwrap().changed.iter().any(|b| *b));
+        assert!(!p.objects.read(cx).edges.is_empty());
+    });
+    ws.update(cx, |ws, cx| ws.stop_debug(cx));
+    ws.read_with(cx, |ws, cx| {
+        assert!(
+            !ws.project_graph.read(cx).status.starts_with("Paused"),
+            "Stopping debug must clear the paused graph status"
+        )
+    });
+}
+
+#[gpui_kit::test]
 fn pipeline_block_picker_inserts_python_imports_and_preserves_dirty_history(cx: &mut TestAppContext) {
     if forge_run::python::find_python(std::path::Path::new("."), None).is_none() {
         return;
@@ -44,10 +413,31 @@ fn pipeline_block_picker_inserts_python_imports_and_preserves_dirty_history(cx: 
     });
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "def pipeline():\n    pass\n");
     assert_eq!(std::fs::read_to_string(dir.path().join("forge_blocks.py")).unwrap(), forge_core::blocks::BLOCKS_PY);
+    loop {
+        cx.run_until_parked();
+        if ws.read_with(cx, |ws, cx| ws.pipeline_is_current(cx)) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(10));
+        cx.executor().advance_clock(Duration::from_millis(40));
+    }
+    ws.update_in(cx, |ws, window, cx| {
+        let b = forge_core::blocks::builtin_blocks().into_iter().find(|b| b.name == "fill_missing").unwrap();
+        ws.place_pipeline_block(&b, true, window, cx);
+    });
+    ws.read_with(cx, |ws, cx| {
+        assert!(
+            ws.active_doc().unwrap().read(cx).doc.text().contains("data.to_dict(\"records\")"),
+            "For each must iterate DataFrame records, not column names"
+        )
+    });
     ws.update_in(cx, |ws, window, cx| {
         ws.reveal_panel("editor", cx);
         ws.focus_editor(window, cx);
     });
+    cx.simulate_keystrokes("ctrl-z");
+    cx.run_until_parked();
     cx.simulate_keystrokes("ctrl-z");
     cx.run_until_parked();
     ws.read_with(cx, |ws, cx| assert!(!ws.active_doc().unwrap().read(cx).doc.text().contains("read_csv")));

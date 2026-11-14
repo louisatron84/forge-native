@@ -5,7 +5,13 @@
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::{Duration, Instant};
+
+const MAX_CAPTURE_BYTES: usize = 64 * 1024 * 1024;
 
 /// Don't open a console window for a child process (Windows).
 pub fn hide_window(cmd: &mut Command) {
@@ -67,22 +73,35 @@ pub fn run_captured(
             let _ = s.write_all(input.as_bytes());
         }
     });
-    fn drain(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<String> {
+    let overflow = Arc::new(AtomicBool::new(false));
+    fn drain(pipe: Option<impl Read + Send + 'static>, overflow: Arc<AtomicBool>) -> std::thread::JoinHandle<String> {
         std::thread::spawn(move || {
             let mut bytes = Vec::new();
             if let Some(mut p) = pipe {
-                let _ = p.read_to_end(&mut bytes);
+                let mut chunk = [0; 8192];
+                while let Ok(n) = p.read(&mut chunk) {
+                    if n == 0 {
+                        break;
+                    }
+                    if n > MAX_CAPTURE_BYTES - bytes.len() {
+                        overflow.store(true, Ordering::Release);
+                        return String::new();
+                    }
+                    bytes.extend_from_slice(&chunk[..n]);
+                }
             }
             String::from_utf8_lossy(&bytes).replace("\r\n", "\n")
         })
     }
-    let out = drain(child.stdout.take());
-    let err = drain(child.stderr.take());
+    let out = drain(child.stdout.take(), overflow.clone());
+    let err = drain(child.stderr.take(), overflow.clone());
     let started = Instant::now();
     let code = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status.code(),
-            Ok(None) if started.elapsed() < timeout => std::thread::sleep(Duration::from_millis(5)),
+            Ok(None) if started.elapsed() < timeout && !overflow.load(Ordering::Acquire) => {
+                std::thread::sleep(Duration::from_millis(5))
+            }
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -91,18 +110,44 @@ pub fn run_captured(
         }
     };
     let _ = writer.join();
-    Captured {
-        code,
-        stdout: out.join().unwrap_or_default(),
-        stderr: err.join().unwrap_or_default(),
-        failed: false,
-        not_found: false,
+    let stdout = out.join().unwrap_or_default();
+    let stderr = err.join().unwrap_or_default();
+    if overflow.load(Ordering::Acquire) {
+        // Never let callers apply a partial formatter response or parse truncated analysis.
+        return Captured {
+            code: Some(-1),
+            stderr: "Helper exceeded the 64 MiB output limit.".into(),
+            ..Default::default()
+        };
     }
+    Captured { code, stdout, stderr, failed: false, not_found: false }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn helper_output_limit_is_an_error_not_silent_truncation() {
+        for stream in ["stdout", "stderr"] {
+            let script =
+                format!("import sys\nfor _ in range(65):\n    sys.{stream}.buffer.write(b'x' * (1024 * 1024))\n");
+            let result = run_captured(
+                if cfg!(windows) { "python" } else { "python3" },
+                &["-I".into(), "-S".into(), "-c".into(), script],
+                &std::env::temp_dir(),
+                &[],
+                "",
+                Duration::from_secs(10),
+            );
+            if result.not_found {
+                return eprintln!("Python not installed: skipped output-cap test");
+            }
+            assert!(!result.ok(), "an oversized helper response was accepted");
+            assert!(result.stdout.is_empty(), "partial output must never be applied as formatted code");
+            assert!(result.stderr.contains("output limit"), "{result:?}");
+        }
+    }
 
     #[test]
     fn a_missing_program_is_reported_as_not_found() {

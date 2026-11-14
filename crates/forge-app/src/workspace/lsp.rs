@@ -401,6 +401,9 @@ impl Workspace {
             )
         });
         self.lsp.counts = counts;
+        if self.project_graph.read(cx).detail_mode == 3 {
+            self.refresh_map_markers(cx);
+        }
         cx.notify();
     }
 

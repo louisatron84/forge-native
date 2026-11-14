@@ -15,35 +15,64 @@ pub fn encode_message(message: &Value) -> Vec<u8> {
 #[derive(Default)]
 pub struct MessageReader {
     buffer: Vec<u8>,
+    body_length: Option<usize>,
+    failed: bool,
 }
+
+const MAX_HEADER_BYTES: usize = 8192;
+const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
 
 impl MessageReader {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn feed(&mut self, chunk: &[u8]) -> Vec<Value> {
-        self.buffer.extend_from_slice(chunk);
+    pub fn is_failed(&self) -> bool {
+        self.failed
+    }
+
+    pub fn feed(&mut self, mut chunk: &[u8]) -> Vec<Value> {
         let mut out = Vec::new();
-        while let Some(header_end) = self.buffer.windows(4).position(|w| w == b"\r\n\r\n") {
-            let header = String::from_utf8_lossy(&self.buffer[..header_end]).to_lowercase();
-            let length = header
-                .lines()
-                .find_map(|l| l.strip_prefix("content-length:"))
-                .and_then(|v| v.trim().parse::<usize>().ok());
-            let Some(length) = length else {
-                // Malformed header: drop it and resync on the next one.
-                self.buffer.drain(..header_end + 4);
+        while !self.failed && !chunk.is_empty() {
+            if let Some(length) = self.body_length {
+                let take = (length - self.buffer.len()).min(chunk.len());
+                self.buffer.extend_from_slice(&chunk[..take]);
+                chunk = &chunk[take..];
+                if self.buffer.len() == length {
+                    if let Ok(value) = serde_json::from_slice(&self.buffer) {
+                        out.push(value);
+                    }
+                    self.buffer.clear();
+                    if self.buffer.capacity() > 64 * 1024 {
+                        self.buffer = Vec::new();
+                    }
+                    self.body_length = None;
+                }
                 continue;
-            };
-            let start = header_end + 4;
-            if self.buffer.len() < start + length {
-                break; // wait for the rest of the body
             }
-            if let Ok(v) = serde_json::from_slice::<Value>(&self.buffer[start..start + length]) {
-                out.push(v);
+
+            // Inspect each header byte once, even when the stream arrives one byte at a time.
+            self.buffer.push(chunk[0]);
+            chunk = &chunk[1..];
+            if self.buffer.len() > MAX_HEADER_BYTES {
+                self.failed = true;
+            } else if self.buffer.ends_with(b"\r\n\r\n") {
+                let length = std::str::from_utf8(&self.buffer).ok().and_then(|header| {
+                    let mut lengths = header.lines().filter_map(|line| {
+                        let (key, value) = line.split_once(':')?;
+                        key.eq_ignore_ascii_case("content-length").then_some(value.trim())
+                    });
+                    let length = lengths.next()?.parse::<usize>().ok()?;
+                    (length > 0 && length <= MAX_BODY_BYTES && lengths.next().is_none()).then_some(length)
+                });
+                self.failed = length.is_none();
+                self.body_length = length;
+                self.buffer.clear();
             }
-            self.buffer.drain(..start + length);
+            if self.failed {
+                // Framing is no longer trustworthy. The transport must close this stream.
+                self.buffer = Vec::new();
+            }
         }
         out
     }
@@ -53,6 +82,37 @@ impl MessageReader {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn hostile_lengths_and_unterminated_headers_fail_closed() {
+        for header in [
+            format!("Content-Length: {}\r\n\r\n", usize::MAX),
+            "Content-Length: 67108865\r\n\r\n".into(),
+            "x".repeat(8193),
+        ] {
+            let mut r = MessageReader::new();
+            assert!(r.feed(header.as_bytes()).is_empty());
+            // Once framing is lost, never reinterpret an attacker-controlled body as headers.
+            assert!(r.feed(&encode_message(&json!({"id": 1}))).is_empty());
+            assert!(r.buffer.is_empty(), "invalid stream retained memory");
+        }
+    }
+
+    #[test]
+    fn streams_large_bodies_and_many_messages_in_order() {
+        let message = json!({"result": "x".repeat(128 * 1024)});
+        let wire = encode_message(&message);
+        let mut reader = MessageReader::new();
+        let mut got = Vec::new();
+        for chunk in wire.chunks(97) {
+            got.extend(reader.feed(chunk));
+        }
+        assert_eq!(got, vec![message]);
+        let wire: Vec<_> = (0..10_000).flat_map(|i| encode_message(&json!({"id": i}))).collect();
+        let got = reader.feed(&wire);
+        assert_eq!(got.len(), 10_000);
+        assert_eq!(got[9999], json!({"id": 9999}));
+    }
 
     #[test]
     fn content_length_counts_bytes_not_characters() {

@@ -18,7 +18,16 @@ pub fn run_dataflow(
 ) -> Result<forge_core::dataflow::RawFlow, Error> {
     let output = forge_sys::process::run_captured(
         python,
-        &["-X".into(), "utf8".into(), "-c".into(), DATAFLOW_SCRIPT.into(), func.into()],
+        &[
+            "-I".into(),
+            "-S".into(),
+            "-B".into(),
+            "-X".into(),
+            "utf8".into(),
+            "-c".into(),
+            DATAFLOW_SCRIPT.into(),
+            func.into(),
+        ],
         root,
         &[("PYTHONIOENCODING", "utf-8"), ("PYTHONDONTWRITEBYTECODE", "1")],
         source,
@@ -71,7 +80,17 @@ fn run_script(
             return Err(Error::InvalidPath(path.clone()));
         }
     }
-    let mut args = vec!["-X".into(), "utf8".into(), "-".into(), root.to_string_lossy().into_owned()];
+    // These helpers only need the standard library. Ignore project/PYTHONPATH
+    // imports and site startup hooks; an AST scan must never execute project code.
+    let mut args = vec![
+        "-I".into(),
+        "-S".into(),
+        "-B".into(),
+        "-X".into(),
+        "utf8".into(),
+        "-".into(),
+        root.to_string_lossy().into_owned(),
+    ];
     let mut temporary = None;
     if !overrides.is_empty() || only.is_some() {
         // A private file, removed on success, failure, timeout and bad JSON.
