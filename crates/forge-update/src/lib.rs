@@ -105,28 +105,7 @@ impl Updater {
     fn check_inner(&self, automatic: bool) -> Result<(), String> {
         let manager = UpdateManager::new(GithubSource::new(REPOSITORY, None, false), None, None);
         if let Ok(manager) = manager {
-            match manager.check_for_updates().map_err(|e| e.to_string())? {
-                UpdateCheck::UpdateAvailable(info) => {
-                    let release = Release {
-                        version: info.TargetFullRelease.Version.clone(),
-                        notes: info.TargetFullRelease.NotesMarkdown.clone(),
-                        url: format!("{REPOSITORY}/releases/latest"),
-                    };
-                    if !automatic
-                        || (manager.get_is_portable()
-                            && !(cfg!(target_os = "linux") && std::env::var_os("APPIMAGE").is_some()))
-                    {
-                        self.set(State::Available(release));
-                        return Ok(());
-                    }
-                    self.set(State::Downloading(release.clone()));
-                    manager.download_updates(&info, None).map_err(|e| e.to_string())?;
-                    self.save_notes(&release)?;
-                    *self.pending.lock().map_err(|_| "Updater unavailable")? = Some((manager, *info));
-                    self.set(State::Ready(release));
-                }
-                _ => self.set(State::Current),
-            }
+            self.check_managed(manager, automatic)?;
         } else {
             let repo = REPOSITORY.strip_prefix("https://github.com/").ok_or("Invalid release repository")?;
             let url = format!("https://api.github.com/repos/{repo}/releases/latest");
@@ -152,6 +131,32 @@ impl Updater {
                 }
                 Err(e) => return Err(e.to_string()),
             }
+        }
+        Ok(())
+    }
+
+    fn check_managed(&self, manager: UpdateManager, automatic: bool) -> Result<(), String> {
+        match manager.check_for_updates().map_err(|e| e.to_string())? {
+            UpdateCheck::UpdateAvailable(info) => {
+                let release = Release {
+                    version: info.TargetFullRelease.Version.clone(),
+                    notes: info.TargetFullRelease.NotesMarkdown.clone(),
+                    url: format!("{REPOSITORY}/releases/latest"),
+                };
+                if !automatic
+                    || (manager.get_is_portable()
+                        && !(cfg!(target_os = "linux") && std::env::var_os("APPIMAGE").is_some()))
+                {
+                    self.set(State::Available(release));
+                    return Ok(());
+                }
+                self.set(State::Downloading(release.clone()));
+                manager.download_updates(&info, None).map_err(|e| e.to_string())?;
+                self.save_notes(&release)?;
+                *self.pending.lock().map_err(|_| "Updater unavailable")? = Some((manager, *info));
+                self.set(State::Ready(release));
+            }
+            _ => self.set(State::Current),
         }
         Ok(())
     }
@@ -204,6 +209,71 @@ pub fn notes_from_disk(dir: &Path) -> Option<Release> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+
+    fn local_update(corrupt: bool) -> (tempfile::TempDir, Updater, UpdateManager) {
+        use sha2::{Digest, Sha256};
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("feed");
+        std::fs::create_dir_all(&source).unwrap();
+        let archive = source.join("Forge-1.0.1-win-x64-full.nupkg");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("Forge.nuspec", options).unwrap();
+        zip.write_all(b"<package><metadata><id>Forge</id><version>1.0.1</version><mainExe>forge.exe</mainExe><channel>win-x64</channel></metadata></package>").unwrap();
+        zip.start_file("lib/app/Squirrel.exe", options).unwrap();
+        zip.write_all(b"test helper: never executed").unwrap();
+        zip.set_comment("original").unwrap();
+        zip.finish().unwrap();
+        let bytes = std::fs::read(&archive).unwrap();
+        let hash: String = Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect();
+        let feed = serde_json::json!({"Assets":[{"PackageId":"Forge","Version":"1.0.1","Type":"Full","FileName":archive.file_name().unwrap().to_str().unwrap(),"SHA256":hash,"SHA1":"","Size":bytes.len(),"NotesMarkdown":"A new release","NotesHtml":""}]});
+        std::fs::write(source.join("releases.win-x64.json"), feed.to_string()).unwrap();
+        if corrupt {
+            // A structurally valid archive with the same size but a different digest.
+            let mut tampered = bytes.clone();
+            let end = tampered.len();
+            tampered[end - 8..].copy_from_slice(b"tampered");
+            std::fs::write(&archive, tampered).unwrap();
+        }
+        let manifest = dir.path().join("sq.version");
+        std::fs::write(&manifest, "<package><metadata><id>Forge</id><version>1.0.0</version><mainExe>forge.exe</mainExe><channel>win-x64</channel></metadata></package>").unwrap();
+        let config = velopack::locator::VelopackLocatorConfig {
+            RootAppDir: dir.path().into(),
+            UpdateExePath: dir.path().join("Update.exe"),
+            PackagesDir: dir.path().join("packages"),
+            ManifestPath: manifest,
+            CurrentBinaryDir: dir.path().join("current"),
+            IsPortable: false,
+        };
+        std::fs::create_dir_all(&config.PackagesDir).unwrap();
+        std::fs::create_dir_all(&config.CurrentBinaryDir).unwrap();
+        std::fs::write(&config.UpdateExePath, b"test helper: never executed").unwrap();
+        let manager = UpdateManager::new(velopack::sources::FileSource::new(source), None, Some(config)).unwrap();
+        let updater = Updater::new(dir.path().join("data"));
+        (dir, updater, manager)
+    }
+
+    #[test]
+    fn managed_updates_download_verify_and_save_notes_before_becoming_ready() {
+        let (_dir, updater, manager) = local_update(false);
+        updater.check_managed(manager.clone(), false).unwrap();
+        assert!(matches!(updater.state(), State::Available(_)));
+        assert!(updater.notes().is_none());
+        updater.check_managed(manager, true).unwrap();
+        assert!(matches!(updater.state(), State::Ready(_)));
+        assert_eq!(updater.notes().unwrap().notes, "A new release");
+        assert!(updater.pending.lock().unwrap().is_some());
+    }
+
+    #[test]
+    fn corrupted_updates_never_become_ready_or_save_release_notes() {
+        let (_dir, updater, manager) = local_update(true);
+        assert!(updater.check_managed(manager, true).is_err());
+        assert!(!matches!(updater.state(), State::Ready(_)));
+        assert!(updater.notes().is_none());
+        assert!(updater.pending.lock().unwrap().is_none());
+    }
     #[test]
     fn compares_versions_and_rejects_invalid_versions() {
         assert!(is_newer("0.50.0", "1.0.0"));

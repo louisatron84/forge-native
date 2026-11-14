@@ -3,6 +3,53 @@ use super::*;
 use gpui_kit::{TestAppContext, VisualTestContext};
 
 #[gpui_kit::test]
+fn cancelling_close_cancels_a_requested_update_restart(cx: &mut TestAppContext) {
+    let (_data, ws, cx) = setup(cx);
+    let project = tempfile::tempdir().unwrap();
+    let path = project.path().join("notes.txt");
+    std::fs::write(&path, "before").unwrap();
+    ws.update_in(cx, |ws, window, cx| {
+        ws.open_folder(project.path().into(), window, cx);
+        ws.open_path(path, window, cx);
+        let doc = ws.active_doc().unwrap().clone();
+        doc.update(cx, |d, cx| {
+            d.edit(None, cx, |doc| {
+                let forge_text::Doc { buffer, history, .. } = doc;
+                history.transact(buffer, forge_text::EditKind::Other, Pos::new(0, 0), |b| {
+                    b.insert(Pos::new(0, 0), "changed")
+                });
+            })
+        });
+        cx.global_mut::<AppState>().restart_after_update = true;
+        assert!(!ws.should_close(window, cx));
+    });
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    ws.read_with(cx, |_, cx| assert!(!app_state::state(cx).restart_after_update));
+}
+
+#[gpui_kit::test]
+fn release_notes_command_and_update_preferences_use_persisted_state(cx: &mut TestAppContext) {
+    let (_data, ws, cx) = setup(cx);
+    ws.update_in(cx, |ws, window, cx| {
+        app_state::state(cx)
+            .updater
+            .save_notes(&forge_update::Release {
+                version: "1.0.1".into(),
+                notes: "Saved release improvements".into(),
+                url: String::new(),
+            })
+            .unwrap();
+        ws.run_command("help.releaseNotes", window, cx);
+        assert!(ws.git_inspect.read(cx).contains_text("Saved release improvements"));
+        app_state::update_settings(cx, |s| s.check_for_updates = false).unwrap();
+        assert!(!app_state::state(cx).user.settings().0.check_for_updates);
+        ws.update_status(cx);
+        assert!(ws.settings_view.read(cx).update_info.contains(forge_update::CURRENT));
+    });
+}
+
+#[gpui_kit::test]
 fn project_map_keyboard_navigation_and_file_context_panels_follow_the_open_file(cx: &mut TestAppContext) {
     if forge_run::python::find_python(std::path::Path::new("."), None).is_none() {
         return;

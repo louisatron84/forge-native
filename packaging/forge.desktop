@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Forge
+Comment=Native Python IDE
+Exec=forge %f
+Icon=forge
+Terminal=false
+Categories=Development;IDE;
+StartupNotify=true

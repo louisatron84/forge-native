@@ -2,6 +2,7 @@
 
 // Parts of the views are wired up as the workspace is built (M2); remove when it is.
 #![allow(dead_code)]
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app_state;
 mod document;
