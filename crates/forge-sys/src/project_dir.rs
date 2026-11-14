@@ -62,19 +62,33 @@ pub fn prepare_project_dir_with(root: &Path, ops: &FsOps<'_>) -> ProjectDirResul
     }
     // Copy into a temporary folder and only then give it the real name, so a copy that
     // fails partway never leaves a half-filled .forge that would win from then on.
-    let temp = root.join(format!("{PROJECT_DIR}-copying-{}", std::process::id()));
-    match (ops.copy_dir)(&legacy, &temp).and_then(|_| std::fs::rename(&temp, &current)) {
+    let Ok(temp) = tempfile::Builder::new().prefix(".forge-copying-").tempdir_in(root) else {
+        return ProjectDirResult::Error;
+    };
+    match (ops.copy_dir)(&legacy, temp.path()).and_then(|_| std::fs::rename(temp.path(), &current)) {
         Ok(()) => ProjectDirResult::Copied,
-        Err(_) => {
-            let _ = std::fs::remove_dir_all(&temp);
-            ProjectDirResult::Error
-        }
+        Err(_) => ProjectDirResult::Error,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_migration_does_not_delete_a_preexisting_staging_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".ideforfun")).unwrap();
+        let existing = dir.path().join(format!(".forge-copying-{}", std::process::id()));
+        std::fs::create_dir(&existing).unwrap();
+        std::fs::write(existing.join("keep.txt"), "user data").unwrap();
+        let fail = |_: &Path, _: &Path| Err(io::Error::other("simulated failure"));
+        assert_eq!(
+            prepare_project_dir_with(dir.path(), &FsOps { rename: &fail, copy_dir: &fail }),
+            ProjectDirResult::Error
+        );
+        assert_eq!(std::fs::read_to_string(existing.join("keep.txt")).unwrap(), "user data");
+    }
 
     fn put(root: &Path, rel: &str, text: &str) {
         let p = root.join(rel);

@@ -140,6 +140,20 @@ mod tests {
     }
 
     #[test]
+    fn abandoned_requests_do_not_accumulate_while_a_server_is_unresponsive() {
+        let (client, _) = setup();
+        let live = client.request("keep", Value::Null);
+        for _ in 0..1000 {
+            drop(client.request("cancelled-hover", Value::Null));
+        }
+        let next = client.request("next", Value::Null);
+        assert_eq!(client.pending.lock().unwrap().len(), 2);
+        client.handle_message(json!({"id": 1, "result": "still live"}));
+        assert_eq!(futures::executor::block_on(live).unwrap().unwrap(), json!("still live"));
+        drop(next);
+    }
+
+    #[test]
     fn requests_get_increasing_ids_and_their_matching_responses() {
         let (client, sent) = setup();
         let a = client.request("a", json!({ "x": 1 }));

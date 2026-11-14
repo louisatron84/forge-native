@@ -11,7 +11,6 @@ use gpui_kit::{
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ListHorizontalSizingBehavior, ParentElement,
     Render, SharedString, StatefulInteractiveElement, Styled, Subscription, UniformListScrollHandle, Window,
 };
-use std::sync::Arc;
 
 /// Lines kept on screen; older ones are removed (with a note saying how many).
 pub const MAX_LINES: usize = 20_000;
@@ -276,14 +275,17 @@ pub fn actions(panel: &Entity<OutputPanel>, t: &Theme) -> AnyElement {
 impl Render for OutputPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.global::<ForgeTheme>().0.clone();
-        let lines = Arc::new(self.log.lines.clone());
         let trimmed = self.log.trimmed;
         let list = uniform_list(
             "output-lines",
-            lines.len(),
+            self.log.lines.len(),
             cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
                 let t = cx.global::<ForgeTheme>().0.clone();
-                range.map(|i| this.render_line(i, &lines[i], &t, cx)).collect::<Vec<_>>()
+                // The list requests only visible rows. Borrow those rows instead
+                // of cloning up to 20,000 lines on every frame/scroll event.
+                range
+                    .filter_map(|i| this.log.lines.get(i).map(|line| this.render_line(i, line, &t, cx)))
+                    .collect::<Vec<_>>()
             }),
         )
         .track_scroll(&self.scroll)

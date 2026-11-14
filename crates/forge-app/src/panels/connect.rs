@@ -70,6 +70,11 @@ enum FieldInput {
     Line(Entity<InputState>),
     Many(Entity<TextareaState>),
 }
+struct ResponsePreview {
+    columns: Vec<String>,
+    rows: Vec<Vec<String>>,
+    count: usize,
+}
 pub struct ConnectPanel {
     pub boxes: Vec<ApiBox>,
     pub selected: Option<usize>,
@@ -81,7 +86,7 @@ pub struct ConnectPanel {
     show_code: bool,
     pub testing: bool,
     pub env_ignored: bool,
-    response_preview: String,
+    response_preview: Option<ResponsePreview>,
     inputs: HashMap<Field, FieldInput>,
     _subscriptions: Vec<Subscription>,
 }
@@ -159,15 +164,12 @@ impl ConnectPanel {
         cx.notify();
     }
     fn refresh_response(&mut self) {
-        use forge_core::api_fields::csv_from_sample;
-        self.response_preview = self
-            .current()
-            .and_then(|b| b.requests.get(self.request))
-            .and_then(|r| {
-                let json = r.test.as_ref()?.sample.as_ref()?;
-                Some(csv_from_sample(json, r.records_path.as_deref(), &r.ticked, 10).0)
-            })
-            .unwrap_or_default();
+        self.response_preview = self.current().and_then(|b| b.requests.get(self.request)).and_then(|r| {
+            let json = r.test.as_ref()?.sample.as_ref()?;
+            let (rows, count) =
+                forge_core::api_fields::table_from_sample(json, r.records_path.as_deref(), &r.ticked, 10);
+            Some(ResponsePreview { columns: r.ticked.clone(), rows, count })
+        });
     }
     fn response_view(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = cx.global::<ForgeTheme>().0.clone();
@@ -211,30 +213,39 @@ impl ConnectPanel {
                 }
                 fn leaves<'a>(
                     nodes: &'a [forge_core::boxes::FieldNode],
-                    out: &mut Vec<&'a forge_core::boxes::FieldNode>,
+                    depth: usize,
+                    out: &mut Vec<(&'a forge_core::boxes::FieldNode, usize)>,
                 ) {
                     for n in nodes {
                         if n.children.is_empty() {
-                            out.push(n)
+                            out.push((n, depth))
                         } else {
-                            leaves(&n.children, out)
+                            leaves(&n.children, depth + 1, out)
                         }
                     }
                 }
                 let mut fields = Vec::new();
                 if let Some(tree) = &test.fields {
-                    leaves(tree, &mut fields)
+                    leaves(tree, 0, &mut fields)
                 }
-                for (i, field) in fields.iter().enumerate() {
+                for (i, (field, depth)) in fields.iter().enumerate() {
                     let selector = format!("connect-response-field-{i}");
                     let key = field.path.join(".");
                     let checked = request.ticked.contains(&key);
+                    let label = field.path.join(" › ");
                     view = view.child(
                         div()
                             .id(("connect-response-field", i))
                             .debug_selector(move || selector.clone())
+                            .pl(t.px(8. + *depth as f32 * 16.))
+                            .py(t.px(3.))
+                            .flex()
+                            .items_center()
+                            .gap(t.px(6.))
                             .cursor_pointer()
-                            .child(format!("{} {} · {}", if checked { "☑" } else { "☐" }, key, field.sample))
+                            .child(div().text_color(t.heat_2).child(if checked { "☑" } else { "☐" }))
+                            .child(label)
+                            .child(div().text_color(t.fg_muted).text_size(t.px(10.)).child(field.sample.clone()))
                             .on_click(cx.listener(move |p, _, _, cx| {
                                 if let Some(r) = p
                                     .selected
@@ -255,12 +266,150 @@ impl ConnectPanel {
                 }
             }
         }
-        if !self.response_preview.is_empty() {
-            view = view
-                .child(div().text_color(t.fg_muted).child("CSV preview (first 10 records)"))
-                .child(div().child(self.response_preview.clone()));
-        }
         view.into_any_element()
+    }
+    fn test_output_view(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.global::<ForgeTheme>().0.clone();
+        let Some(api) = self.current() else { return div().into_any_element() };
+        let Some(request) = api.requests.get(self.request) else { return div().into_any_element() };
+        let Some(preview) = &self.response_preview else { return div().into_any_element() };
+        let code = forge_core::box_code::generate_block(api, api.target.mode == "new");
+        let code_header = div()
+            .flex_none()
+            .px(t.px(10.))
+            .py(t.px(6.))
+            .border_b_1()
+            .border_color(t.border)
+            .bg(t.raised)
+            .text_size(t.px(10.))
+            .font_family(crate::theme::CODE_FONT)
+            .text_color(t.fg_muted)
+            .child(format!("{} · generated Python", api.target.file));
+        let mut line_state = forge_text::tokenizer::LineState::Normal;
+        let code_lines = code.lines().enumerate().map(|(line_number, line)| {
+            let (tokens, next_state) = forge_text::tokenizer::tokenize_line(line, line_state);
+            line_state = next_state;
+            let chars = line.chars().collect::<Vec<_>>();
+            let mut cursor = 0;
+            let mut spans = Vec::new();
+            for token in tokens {
+                let start = token.start.min(chars.len());
+                let end = token.end.min(chars.len());
+                if start > cursor {
+                    spans
+                        .push(div().child(chars[cursor..start].iter().copied().collect::<String>()).into_any_element());
+                }
+                if end > start {
+                    spans.push(
+                        div()
+                            .text_color(t.token_style(token.kind).0)
+                            .child(chars[start..end].iter().copied().collect::<String>())
+                            .into_any_element(),
+                    );
+                    cursor = end;
+                }
+            }
+            if cursor < chars.len() {
+                spans.push(div().child(chars[cursor..].iter().copied().collect::<String>()).into_any_element());
+            }
+            div()
+                .id(("connect-generated-line", line_number))
+                .flex()
+                .flex_none()
+                .whitespace_nowrap()
+                .font_family(crate::theme::CODE_FONT)
+                .text_size(t.px(10.))
+                .children(spans)
+        });
+        let code_body = div()
+            .id("connect-generated-python")
+            .debug_selector(|| "connect-generated-python".into())
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .overflow_x_scroll()
+            .overflow_y_scroll()
+            .p(t.px(10.))
+            .bg(t.bg)
+            .children(code_lines);
+
+        let csv_header = div()
+            .flex_none()
+            .px(t.px(10.))
+            .py(t.px(6.))
+            .border_t_1()
+            .border_b_1()
+            .border_color(t.border)
+            .bg(t.raised)
+            .text_size(t.px(10.))
+            .font_family(crate::theme::CODE_FONT)
+            .text_color(t.fg_muted)
+            .child(format!(
+                "{} · CSV preview (first {} of {} records)",
+                request.output,
+                preview.rows.len(),
+                preview.count
+            ));
+        let mut csv_body = div()
+            .id("connect-csv-table")
+            .debug_selector(|| "connect-csv-table".into())
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .overflow_x_scroll()
+            .overflow_y_scroll()
+            .p(t.px(8.));
+        if preview.columns.is_empty() {
+            csv_body = csv_body.child(div().text_color(t.fg_muted).child("Select response fields to preview the CSV."));
+        } else {
+            let cell = |id: String, text: String, header: bool| {
+                div()
+                    .id(id)
+                    .flex_1()
+                    .min_w(t.px(92.))
+                    .px(t.px(7.))
+                    .py(t.px(4.))
+                    .border_1()
+                    .border_color(t.border)
+                    .font_family(crate::theme::CODE_FONT)
+                    .text_size(t.px(10.))
+                    .text_color(if header { t.heat_2 } else { t.fg })
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .child(text)
+            };
+            csv_body = csv_body.child(
+                div().id("connect-csv-header").flex().min_w_0().children(
+                    preview
+                        .columns
+                        .iter()
+                        .enumerate()
+                        .map(|(i, column)| cell(format!("connect-csv-heading-{i}"), column.clone(), true)),
+                ),
+            );
+            csv_body = csv_body.children(preview.rows.iter().enumerate().map(|(row_index, row)| {
+                div().id(("connect-csv-row", row_index)).flex().min_w_0().children(row.iter().enumerate().map(
+                    |(column_index, value)| {
+                        cell(format!("connect-csv-cell-{row_index}-{column_index}"), value.clone(), false)
+                    },
+                ))
+            }));
+        }
+        div()
+            .id("connect-test-output")
+            .debug_selector(|| "connect-test-output".into())
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .border_l_1()
+            .border_color(t.border)
+            .child(code_header)
+            .child(code_body)
+            .child(csv_header)
+            .child(csv_body)
+            .into_any_element()
     }
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut inputs = HashMap::new();
@@ -295,7 +444,7 @@ impl ConnectPanel {
         }
         Self {
             boxes: Vec::new(),
-            response_preview: String::new(),
+            response_preview: None,
             selected: None,
             request: 0,
             has_project: false,
@@ -640,6 +789,56 @@ impl Render for Toolbox {
 mod tests {
     use super::*;
     #[gpui_kit::test]
+    fn successful_test_call_shows_python_and_tabular_csv_previews(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_global(ForgeTheme(std::sync::Arc::new(crate::theme::Theme::molten())));
+        });
+        let mut panel = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let p = cx.new(|cx| ConnectPanel::new(window, cx));
+            panel = Some(p.clone());
+            gpui_kit::component::Root::new(p, window, cx)
+        });
+        let panel = panel.unwrap();
+        panel.update_in(cx, |p, window, cx| {
+            let mut api = new_api_box(&[], "Placeholder API");
+            api.target.file = "api/placeholder.py".into();
+            api.requests[0].output = "placeholder_users.csv".into();
+            api.requests[0].url = "https://jsonplaceholder.typicode.com/users".into();
+            let box_id = api.id.clone();
+            let request_id = api.requests[0].id.clone();
+            p.set_boxes(vec![api], true, window, cx);
+            p.test_result(
+                &box_id,
+                &request_id,
+                forge_sys::connect::TestCallResult {
+                    ok: true,
+                    status: Some(200),
+                    status_text: Some("OK".into()),
+                    json: Some(serde_json::json!([
+                        {"id": 1, "name": "Leanne Graham", "address": {"city": "Gwenborough"}},
+                        {"id": 2, "name": "Ervin Howell", "address": {"city": "Wisokyburgh"}}
+                    ])),
+                    ..Default::default()
+                },
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        let settings = cx.debug_bounds("connect-test-settings").expect("Request controls remain in the left pane");
+        let output = cx.debug_bounds("connect-test-output").expect("Test results appear beside the request controls");
+        assert!(
+            output.origin.x >= settings.origin.x + settings.size.width,
+            "The code and CSV previews should be laid out to the right of the request controls"
+        );
+        assert!(cx.debug_bounds("connect-generated-python").is_some());
+        assert!(cx.debug_bounds("connect-csv-table").is_some());
+        assert!(cx.debug_bounds("connect-test-call").is_some());
+        assert!(cx.debug_bounds("connect-response-field-0").is_some());
+    }
+
+    #[gpui_kit::test]
     fn request_basics_and_actions_stay_visible_while_optional_sections_preserve_values(
         cx: &mut gpui_kit::TestAppContext,
     ) {
@@ -665,7 +864,7 @@ mod tests {
         assert!(cx.debug_bounds("connect-field-url").is_some());
         assert!(cx.debug_bounds("connect-field-headers").is_none());
         assert!(cx.debug_bounds("connect-field-target").is_none());
-        let before = cx.debug_bounds("connect-test-call").expect("Test stays in the action footer");
+        let before = cx.debug_bounds("connect-test-call").expect("Test call stays next to the request fields");
         let advanced = cx.debug_bounds("connect-advanced").expect("Optional request settings are collapsed");
         cx.simulate_click(advanced.center(), gpui_kit::Modifiers::default());
         cx.run_until_parked();
@@ -673,7 +872,7 @@ mod tests {
         assert_eq!(
             before.origin,
             cx.debug_bounds("connect-test-call").unwrap().origin,
-            "Expanding options must not move the primary action"
+            "Expanding options must not move the test call action"
         );
         cx.simulate_click(advanced.center(), gpui_kit::Modifiers::default());
         cx.run_until_parked();

@@ -155,14 +155,50 @@ pub fn csv_preview(rows: &[BTreeMap<String, String>], columns: &[String], max: u
     }
     out
 }
+fn sample_records<'a>(json: &'a Value, path: Option<&[String]>) -> &'a [Value] {
+    let selected = path.and_then(|p| at(json, p)).and_then(Value::as_array).or_else(|| json.as_array());
+    let lists = if selected.is_none() { record_lists(json) } else { Vec::new() };
+    selected
+        .or_else(|| lists.first().and_then(|list| at(json, &list.path)).and_then(Value::as_array))
+        .map(Vec::as_slice)
+        .unwrap_or_else(|| std::slice::from_ref(json))
+}
+fn sample_cell(record: &Value, path: &[String]) -> String {
+    let value = if record.is_object() {
+        at(record, path)
+    } else if path.first().is_some_and(|s| s == "value") {
+        if path.len() == 1 {
+            Some(record)
+        } else {
+            at(record, &path[1..])
+        }
+    } else {
+        None
+    };
+    match value {
+        None | Some(Value::Null) => String::new(),
+        Some(Value::String(text)) => text.clone(),
+        Some(value) => py_json(value),
+    }
+}
+/// Return the selected columns for a bounded UI preview without cloning every
+/// record or parsing the generated CSV back into cells.
+pub fn table_from_sample(
+    json: &Value,
+    path: Option<&[String]>,
+    columns: &[String],
+    max: usize,
+) -> (Vec<Vec<String>>, usize) {
+    let records = sample_records(json, path);
+    let paths = columns.iter().map(|key| key.split('.').map(str::to_owned).collect::<Vec<_>>()).collect::<Vec<_>>();
+    let rows =
+        records.iter().take(max).map(|record| paths.iter().map(|path| sample_cell(record, path)).collect()).collect();
+    (rows, records.len())
+}
 /// Stream selected records directly into CSV, without cloning the response or
 /// materialising a map for every row. `max` also serves the ten-row UI preview.
 pub fn csv_from_sample(json: &Value, path: Option<&[String]>, columns: &[String], max: usize) -> (String, usize) {
-    let selected = path.and_then(|p| at(json, p)).and_then(Value::as_array).or_else(|| json.as_array());
-    let lists = if selected.is_none() { record_lists(json) } else { Vec::new() };
-    let selected = selected.or_else(|| lists.first().and_then(|list| at(json, &list.path)).and_then(Value::as_array));
-    let single = std::slice::from_ref(json);
-    let records = selected.map(Vec::as_slice).unwrap_or(single);
+    let records = sample_records(json, path);
     fn cell(text: &str) -> String {
         if text.contains([',', '"', '\r', '\n']) {
             format!("\"{}\"", text.replace('"', "\"\""))
@@ -177,22 +213,7 @@ pub fn csv_from_sample(json: &Value, path: Option<&[String]>, columns: &[String]
             if i > 0 {
                 csv.push(',')
             }
-            let value = if record.is_object() {
-                at(record, path)
-            } else if path.first().is_some_and(|s| s == "value") {
-                if path.len() == 1 {
-                    Some(record)
-                } else {
-                    at(record, &path[1..])
-                }
-            } else {
-                None
-            };
-            match value {
-                None | Some(Value::Null) => {}
-                Some(Value::String(text)) => csv.push_str(&cell(text)),
-                Some(value) => csv.push_str(&cell(&py_json(value))),
-            }
+            csv.push_str(&cell(&sample_cell(record, path)));
         }
         csv.push_str("\r\n");
     }
@@ -218,6 +239,18 @@ mod tests {
             let (preview, _) = csv_from_sample(&sample, path.as_deref(), &columns, 1);
             assert_eq!(preview, csv_preview(&rows_for(&records, &columns), &columns, 1));
         }
+    }
+    #[test]
+    fn table_preview_matches_csv_cells_and_is_bounded() {
+        let sample = json!({"users":[
+            {"id":1,"name":"Leanne","address":{"city":"Gwenborough"}},
+            {"id":2,"name":"Ervin","address":{"city":"Wisokyburgh"}}
+        ]});
+        let columns = vec!["id".into(), "name".into(), "address.city".into()];
+        let path = vec!["users".into()];
+        let (rows, count) = table_from_sample(&sample, Some(&path), &columns, 1);
+        assert_eq!(count, 2);
+        assert_eq!(rows, vec![vec!["1", "Leanne", "Gwenborough"]]);
     }
     use serde_json::json;
     fn fixture() -> Value {

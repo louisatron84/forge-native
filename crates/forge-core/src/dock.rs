@@ -717,7 +717,7 @@ impl Tasks {
             return insert_at_edge(root, panel, Zone::Right, 0.6);
         }
         if CONNECT_PANELS.contains(&panel) {
-            return insert_at_edge(root, panel, Zone::Right, 0.26);
+            return insert_at_edge(root, panel, Zone::Right, if panel == "box" { 0.6 } else { 0.26 });
         }
         match find_stack(root, DRAWER_ANCHOR) {
             Some(drawer) => {
@@ -878,6 +878,18 @@ mod tests {
         let connect = placed_panels(&default_arrangement("connect"));
         assert!(connect.contains(&"graph".to_owned()) && connect.contains(&"toolbox".to_owned()));
         assert!(!connect.contains(&EDITOR.to_owned()) && !connect.contains(&"box".to_owned()));
+    }
+
+    #[test]
+    fn api_box_editor_gets_room_for_its_test_result_preview() {
+        let mut tasks = Tasks::new(&SavedLayouts::new());
+        tasks.switch_to("connect");
+        tasks.reveal("box");
+        let DockNode::Split { dir: Dir::Row, sizes, .. } = tasks.root() else {
+            panic!("API box should open beside the Connect workspace");
+        };
+        assert_eq!(sizes, &[0.4, 0.6]);
+        assert_eq!(stack_of(tasks.root(), "box").2, "box");
     }
 
     #[test]

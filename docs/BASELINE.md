@@ -41,3 +41,30 @@ establish the desktop budgets: idle memory, editable-window cold start,
 keystroke-to-screen latency, scrolling FPS and graph layout plus drawing still
 need instrumented desktop measurements on the reference Windows/Linux machines.
 SHIP-09 stays open until those measurements are recorded and meet the targets.
+
+## Incremental highlighting investigation (2026-11-14)
+
+The user supplied an external bot's table reporting missed typing, scrolling,
+graph and full-process memory budgets. Its hardware, OS, workload and timing
+method were not supplied, so those figures are not a reproducible local baseline.
+
+An expanded `perf_text` example reproduces unnecessary work omitted by the
+original single-line measurement: warm a 100k-line Python file, insert and delete
+a character on its first line, and request the final line's tokens after each
+edit. Thirty release-build iterations on this Windows machine:
+
+| CPU workload (p95) | Before | After |
+| --- | --- | --- |
+| Edit/delete plus later-file syntax state propagation | 116.0426 ms | 0.0043 ms |
+| Existing warm middle-line model benchmark | 0.0024 ms | 0.0013 ms |
+
+Run `cargo run --release --offline -p forge-text --example perf_text -j 1`.
+The highlighter now reuses its old state tail once lexical state converges beyond
+all pending edits. Line insertions/deletions discard the misaligned tail.
+This also avoids repeated minimap warm-up frames after ordinary typing. Tests
+compare incremental results against a fresh highlighter across batched edits,
+Python multiline strings and JSONC comments.
+
+These are CPU model timings, **not** input-to-screen latency or scrolling FPS.
+Graph GPU draw time, whole-session idle memory and the supplied desktop latency
+figures remain unverified; no performance budget is marked complete by this change.

@@ -191,7 +191,25 @@ impl ConnectPanel {
             body = body.child(self.render_field(Field::Args, "args", "Test values (name=value)", cx));
         }
         body = body.child(self.render_field(Field::Output, "output", "Save response to CSV", cx));
-        if request.test.is_some() {
+        let status_color = request.test.as_ref().map_or(t.fg_muted, |test| if test.ok { t.ok } else { t.err });
+        body = body.child(
+            div()
+                .id("connect-test-action")
+                .flex()
+                .items_center()
+                .gap(t.px(8.))
+                .child(self.button(
+                    "connect-test-call",
+                    if self.testing { "Calling…" } else { "⚡ Test call" },
+                    ConnectEvent::TestCall,
+                    true,
+                    cx,
+                ))
+                .child(
+                    div().id("connect-status").text_size(t.px(10.)).text_color(status_color).child(self.status.clone()),
+                ),
+        );
+        if request.test.as_ref().is_some_and(|test| test.ok && test.sample.is_some()) {
             body = body.child(div().text_color(t.heat_2).child("Response fields")).child(self.response_view(cx));
         }
         body = body.child(self.section(
@@ -335,35 +353,12 @@ impl ConnectPanel {
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(ConnectEvent::Remove))),
             );
         }
-        let footer = div()
-            .flex_none()
-            .p(t.px(10.))
-            .border_t_1()
-            .border_color(t.border)
-            .flex()
-            .flex_col()
-            .gap(t.px(7.))
-            .children((!self.status.is_empty()).then(|| {
-                div()
-                    .id("connect-status")
-                    .max_h(t.px(48.))
-                    .overflow_y_scroll()
-                    .text_size(t.px(10.))
-                    .text_color(t.fg_muted)
-                    .child(self.status.clone())
-            }))
-            .child(
+        let footer =
+            div().flex_none().p(t.px(10.)).border_t_1().border_color(t.border).flex().flex_col().gap(t.px(7.)).child(
                 div()
                     .flex()
                     .flex_wrap()
                     .gap(t.px(7.))
-                    .child(self.button(
-                        "connect-test-call",
-                        if self.testing { "Testing…" } else { "Test request" },
-                        ConnectEvent::TestCall,
-                        true,
-                        cx,
-                    ))
                     .child(self.button("connect-preview", "Review code", ConnectEvent::Preview, false, cx))
                     .children(
                         request
@@ -373,6 +368,22 @@ impl ConnectPanel {
                             .map(|_| self.button("connect-open-csv", "Open CSV", ConnectEvent::OpenCsv, false, cx)),
                     ),
             );
-        base.child(header).child(body).child(footer)
+        if request.test.as_ref().is_some_and(|test| test.ok && test.sample.is_some()) {
+            let settings = div()
+                .id("connect-test-settings")
+                .debug_selector(|| "connect-test-settings".into())
+                .w(gpui_kit::relative(0.42))
+                .min_w(t.px(360.))
+                .min_h_0()
+                .flex_none()
+                .flex()
+                .flex_col()
+                .child(header)
+                .child(body)
+                .child(footer);
+            base.child(div().flex().flex_1().min_h_0().min_w_0().child(settings).child(self.test_output_view(cx)))
+        } else {
+            base.child(header).child(body).child(footer)
+        }
     }
 }

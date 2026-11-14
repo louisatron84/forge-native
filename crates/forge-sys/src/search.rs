@@ -6,6 +6,7 @@
 
 use crate::files::list_files;
 use forge_text::find::{build_regex, FindOptions};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,6 +62,11 @@ const PREVIEW_MAX: usize = 120;
 pub fn make_preview(line: &str, col: usize, length: usize) -> Preview {
     let chars: Vec<char> = line.chars().collect();
     let indent = chars.iter().take_while(|c| c.is_whitespace()).count();
+    preview_chars(&chars, indent, col, length)
+}
+
+fn preview_chars(chars: &[char], indent: usize, col: usize, length: usize) -> Preview {
+    let col = col.min(chars.len());
     let mut from = indent.min(col);
     let mut prefix = "";
     if col - from > PREVIEW_BEFORE {
@@ -70,7 +76,7 @@ pub fn make_preview(line: &str, col: usize, length: usize) -> Preview {
     let mut to = chars.len();
     let mut suffix = "";
     if to - from > PREVIEW_MAX {
-        to = (col + length).max(from + PREVIEW_MAX).min(chars.len());
+        to = col.saturating_add(length).max(from + PREVIEW_MAX).min(chars.len());
         suffix = if to < chars.len() { "…" } else { "" };
     }
     let body: String = chars[from..to].iter().collect();
@@ -82,7 +88,7 @@ fn is_binary(buf: &[u8]) -> bool {
     buf[..buf.len().min(8192)].contains(&0)
 }
 
-/// Search the project. `cancelled` is checked between files (a newer search started).
+/// Search the project. Check cancellation between files, lines and matches.
 pub fn search_project(
     root: &Path,
     query: &str,
@@ -91,7 +97,7 @@ pub fn search_project(
     cancelled: &dyn Fn() -> bool,
 ) -> SearchResult {
     let mut result = SearchResult::default();
-    if query.is_empty() {
+    if query.is_empty() || limits.max_results == 0 {
         return result;
     }
     let re = match build_regex(query, opts) {
@@ -107,26 +113,58 @@ pub fn search_project(
         if cancelled() {
             break;
         }
-        let Ok(meta) = std::fs::metadata(&file.path) else { continue };
+        let Ok(input) = std::fs::File::open(&file.path) else { continue };
+        let Ok(meta) = input.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
         if meta.len() > limits.max_file_bytes {
             result.skipped.push(file.rel.clone());
             continue;
         }
-        let Ok(buf) = std::fs::read(&file.path) else { continue };
+        let mut buf = Vec::new();
+        if input.take(limits.max_file_bytes.saturating_add(1)).read_to_end(&mut buf).is_err() {
+            continue;
+        }
+        // Enforce the limit on the bytes actually read, even if a file grows.
+        if buf.len() as u64 > limits.max_file_bytes {
+            result.skipped.push(file.rel.clone());
+            continue;
+        }
         if is_binary(&buf) {
             continue;
         }
         let text = String::from_utf8_lossy(&buf);
         let mut matches = Vec::new();
-        for (line_no, line) in text.split('\n').enumerate() {
+        'lines: for (line_no, line) in text.split('\n').enumerate() {
+            if cancelled() {
+                break;
+            }
             let line = line.strip_suffix('\r').unwrap_or(line);
+            let mut chars = None;
+            let (mut byte_at, mut col_at) = (0, 0);
             for m in re.find_iter(line) {
+                if cancelled() {
+                    break 'lines;
+                }
                 if m.as_str().is_empty() {
                     continue;
                 }
-                let col = line[..m.start()].chars().count();
+                let col = col_at + line[byte_at..m.start()].chars().count();
                 let length = m.as_str().chars().count();
-                matches.push(SearchMatch { line: line_no, col, length, preview: make_preview(line, col, length) });
+                byte_at = m.end();
+                col_at = col + length;
+                let (chars, indent) = chars.get_or_insert_with(|| {
+                    let chars = line.chars().collect::<Vec<_>>();
+                    let indent = chars.iter().take_while(|c| c.is_whitespace()).count();
+                    (chars, indent)
+                });
+                matches.push(SearchMatch {
+                    line: line_no,
+                    col,
+                    length,
+                    preview: preview_chars(chars, *indent, col, length),
+                });
                 result.total += 1;
                 if result.total >= limits.max_results {
                     break;
@@ -173,6 +211,55 @@ mod tests {
 
     fn search(root: &Path, q: &str, o: FindOptions) -> SearchResult {
         search_project(root, q, o, SearchLimits::default(), &|| false)
+    }
+
+    #[test]
+    fn repeated_unicode_matches_keep_character_columns_and_previews() {
+        let p = tempfile::tempdir().unwrap();
+        let line = "  α😀 needle β needle γ";
+        std::fs::write(p.path().join("unicode.txt"), line).unwrap();
+        let result = search(p.path(), "needle", FindOptions::default());
+        assert_eq!(result.total, 2);
+        for (m, col) in result.files[0].matches.iter().zip([5, 14]) {
+            assert_eq!(m.col, col);
+            assert_eq!(m.preview, make_preview(line, col, 6));
+        }
+    }
+
+    #[test]
+    fn cancellation_is_checked_within_a_single_file() {
+        let p = tempfile::tempdir().unwrap();
+        std::fs::write(p.path().join("many.txt"), "needle\n".repeat(1000)).unwrap();
+        let checks = std::cell::Cell::new(0);
+        let result = search_project(p.path(), "needle", FindOptions::default(), SearchLimits::default(), &|| {
+            checks.set(checks.get() + 1);
+            checks.get() > 10
+        });
+        assert!(result.total < 1000, "cancelled search scanned the entire file");
+    }
+
+    #[test]
+    fn zero_result_budget_returns_no_matches() {
+        let p = project();
+        let result = search_project(
+            p.path(),
+            "user",
+            FindOptions::default(),
+            SearchLimits { max_results: 0, ..Default::default() },
+            &|| false,
+        );
+        assert_eq!(result.total, 0);
+    }
+
+    #[test]
+    #[ignore = "manual release performance measurement"]
+    fn long_line_search_benchmark() {
+        let p = tempfile::tempdir().unwrap();
+        std::fs::write(p.path().join("many.txt"), "prefix needle suffix ".repeat(10_000)).unwrap();
+        let started = std::time::Instant::now();
+        let result = search(p.path(), "needle", FindOptions::default());
+        assert_eq!(result.total, 5000);
+        eprintln!("long_line_search_ms={:.3}", started.elapsed().as_secs_f64() * 1000.);
     }
 
     #[test]

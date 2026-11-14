@@ -2,8 +2,9 @@
 //!
 //! To colour line N we need the state at the start of line N (are we inside a
 //! docstring?), which depends on every line before it. Those states are
-//! cached and, when the text changes at line L, only the states after L are
-//! thrown away. States are computed lazily, only up to the lines being drawn.
+//! cached. After an edit, propagation stops when the state matches the old
+//! state beyond all edited lines. Line splices discard the misaligned tail.
+//! States are computed lazily, only up to the lines being drawn.
 
 use crate::modes::LanguageMode;
 use crate::semantic::{merge_tokens, SemToken};
@@ -14,8 +15,12 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug)]
 pub struct Highlighter {
-    /// states[i] = state at the start of line i. Always valid for every index it holds.
+    /// states[i] = state at the start of line i. The prefix before `valid` is current;
+    /// the remaining states can be reused once propagation converges.
     states: Vec<LineState>,
+    valid: usize,
+    /// Do not converge before processing every pending same-line edit.
+    dirty_through: usize,
     /// From the language server: what each name is, by line (lines from an
     /// edit onwards are dropped until it answers again).
     semantic: Option<BTreeMap<usize, Vec<SemToken>>>,
@@ -29,26 +34,33 @@ impl Default for Highlighter {
 
 impl Highlighter {
     pub fn new() -> Self {
-        Self { states: vec![LineState::Normal], semantic: None }
+        Self { states: vec![LineState::Normal], valid: 1, dirty_through: 0, semantic: None }
     }
 
     /// Forget everything (the language changed, e.g. after a rename).
     pub fn reset(&mut self) {
         self.states.truncate(1);
+        self.valid = 1;
+        self.dirty_through = 0;
         self.semantic = None;
     }
 
     /// How many line states are cached (for tests).
     pub fn cached_lines(&self) -> usize {
-        self.states.len()
+        self.valid
     }
 
     /// Tell the highlighter about one change to the buffer.
     pub fn on_change(&mut self, change: &Change) {
         // A change on a line can't affect the state at its start, only states after it.
         let line = change.at.line;
-        if self.states.len() > line + 1 {
+        self.valid = self.valid.min(line + 1);
+        if change.text.contains('\n') {
+            // A line splice changes indices; the old tail no longer aligns.
             self.states.truncate(line + 1);
+            self.dirty_through = line + 1;
+        } else {
+            self.dirty_through = self.dirty_through.max(line + 1);
         }
         // Same number of lines: only that line's colours are stale; otherwise everything after it may have moved.
         if let Some(sem) = &mut self.semantic {
@@ -75,27 +87,38 @@ impl Highlighter {
     /// else `None`. For the minimap: it must never make a keystroke re-tokenize
     /// the rest of a big file.
     pub fn tokens_if_cached(&mut self, buffer: &TextBuffer, mode: &LanguageMode, line: usize) -> Option<Vec<Token>> {
-        (line < self.states.len()).then(|| self.tokens_for(buffer, mode, line))
+        (line < self.valid).then(|| self.tokens_for(buffer, mode, line))
     }
 
     /// Cache more line states, for at most `budget`. Returns true if there's more to do.
     pub fn warm_up(&mut self, buffer: &TextBuffer, mode: &LanguageMode, budget: Duration, up_to: usize) -> bool {
         let up_to = up_to.min(buffer.line_count().saturating_sub(1));
         let end = Instant::now() + budget;
-        while self.states.len() <= up_to {
-            self.state_at(buffer, mode, up_to.min(self.states.len() + 200));
+        while self.valid <= up_to {
+            self.state_at(buffer, mode, up_to.min(self.valid + 200));
             if Instant::now() > end {
                 break;
             }
         }
-        self.states.len() <= up_to
+        self.valid <= up_to
     }
 
     fn state_at(&mut self, buffer: &TextBuffer, mode: &LanguageMode, line: usize) -> LineState {
-        while self.states.len() <= line {
-            let prev = self.states.len() - 1;
+        while self.valid <= line {
+            let prev = self.valid - 1;
             let end = (mode.tokenize)(buffer.line(prev), self.states[prev]).1;
-            self.states.push(end);
+            if self.valid < self.states.len() {
+                let converged = self.valid >= self.dirty_through && self.states[self.valid] == end;
+                self.states[self.valid] = end;
+                if converged {
+                    self.valid = self.states.len();
+                    self.dirty_through = 0;
+                    continue;
+                }
+            } else {
+                self.states.push(end);
+            }
+            self.valid += 1;
         }
         self.states[line]
     }
@@ -116,6 +139,60 @@ mod tests {
         for c in b.take_changes() {
             h.on_change(&c);
         }
+    }
+
+    #[test]
+    fn incremental_states_match_fresh_highlighting_after_batched_edits() {
+        for path in ["a.py", "a.jsonc"] {
+            let mode = mode_for(path);
+            let mut b = TextBuffer::new("value = 1\nnext = 2\nthird = 3\nlast = 4\n");
+            let mut h = Highlighter::new();
+            let mut seed = 12345u64;
+            let inserts = ["x", "\"\"\"", "\n", "/*", "*/", "#", "\"", " "];
+            for _ in 0..150 {
+                h.tokens_for(&b, mode, b.line_count() - 1);
+                for _ in 0..3 {
+                    seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                    let line = (seed >> 32) as usize % b.line_count();
+                    if seed & 3 == 0 && b.line_len(line) > 0 {
+                        b.delete(pos(line, 0), pos(line, 1));
+                    } else {
+                        b.insert(pos(line, 0), inserts[(seed >> 16) as usize % inserts.len()]);
+                    }
+                }
+                sync(&mut h, &mut b);
+                let mut fresh = Highlighter::new();
+                for line in 0..b.line_count() {
+                    assert_eq!(h.tokens_for(&b, mode, line), fresh.tokens_for(&b, mode, line), "{path}:{line}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unchanged_state_reuses_the_warm_tail_after_typing() {
+        let mut b = TextBuffer::new(&"value = 123\n".repeat(100_000));
+        let mut h = Highlighter::new();
+        let mode = mode_for("a.py");
+        h.tokens_for(&b, mode, 99_999);
+        b.insert(pos(0, 0), "x");
+        sync(&mut h, &mut b);
+        h.tokens_for(&b, mode, 1);
+        assert_eq!(h.cached_lines(), 100_000, "unchanged lexical state must reuse the warm tail");
+    }
+
+    #[test]
+    fn convergence_does_not_skip_a_second_pending_edit() {
+        let mut b = TextBuffer::new("x = 1\ny = 2\nz = 3\nlast = 4");
+        let mut h = Highlighter::new();
+        kinds(&mut h, &b, 3);
+        b.insert(pos(0, 0), "x");
+        b.insert(pos(2, 0), "\"\"\"");
+        sync(&mut h, &mut b);
+        assert_eq!(kinds(&mut h, &b, 3), ["string"]);
+        b.insert(pos(1, 0), "new = 0\n");
+        sync(&mut h, &mut b);
+        assert_eq!(kinds(&mut h, &b, 4), ["string"]);
     }
 
     #[test]
