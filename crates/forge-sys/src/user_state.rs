@@ -60,12 +60,13 @@ pub fn read_json(path: &Path) -> JsonFile {
 }
 
 pub fn write_json(path: &Path, value: &Value) -> io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let mut text = serde_json::to_string_pretty(value).map_err(io::Error::other)?;
-    text.push('\n');
-    std::fs::write(path, text)
+    use std::io::Write;
+    crate::text_file::write_atomic(path, |file| {
+        let mut writer = io::BufWriter::new(file);
+        serde_json::to_writer_pretty(&mut writer, value).map_err(io::Error::other)?;
+        writer.write_all(b"\n")?;
+        writer.flush()
+    })
 }
 
 /// Forge's data folder: `%APPDATA%\Forge` on Windows, `~/.config/forge` on
@@ -342,6 +343,18 @@ pub fn ensure_project_settings(root: &Path, initial: &ProjectSettings) -> io::Re
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn json_saves_replace_hardlinks_without_overwriting_their_targets() {
+        let dir = tempfile::tempdir().unwrap();
+        let victim = dir.path().join("private.txt");
+        let settings = dir.path().join("settings.json");
+        std::fs::write(&victim, "keep me").unwrap();
+        std::fs::hard_link(&victim, &settings).unwrap();
+        write_json(&settings, &json!({"fontSize": 14})).unwrap();
+        assert_eq!(std::fs::read_to_string(victim).unwrap(), "keep me");
+        assert_eq!(read_json(&settings).value(), json!({"fontSize": 14}));
+    }
 
     #[test]
     fn settings_round_trip_and_broken_files_give_defaults_with_an_error() {

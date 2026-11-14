@@ -9,9 +9,8 @@ use forge_core::testing::{find_tests, is_test_file, test_args, TestFile};
 use forge_sys::files::list_files;
 use std::collections::BTreeMap;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -47,8 +46,6 @@ pub struct TestRunResult {
     pub error: Option<String>,
 }
 
-static RUNS: AtomicU64 = AtomicU64::new(0);
-
 /// A test run in progress.
 pub struct TestRun {
     child: Arc<Mutex<Option<Child>>>,
@@ -65,8 +62,18 @@ impl TestRun {
         on_output: impl Fn(String) + Send + Sync + 'static,
         on_done: impl FnOnce(TestRunResult) + Send + 'static,
     ) -> TestRun {
-        let n = RUNS.fetch_add(1, Ordering::SeqCst);
-        let xml_path: PathBuf = std::env::temp_dir().join(format!("forge-pytest-{}-{n}.xml", std::process::id()));
+        let child_slot = Arc::new(Mutex::new(None));
+        let report_dir = match tempfile::Builder::new().prefix("forge-pytest-").tempdir() {
+            Ok(dir) => dir,
+            Err(e) => {
+                on_done(TestRunResult {
+                    error: Some(format!("Couldn't create a test report directory: {e}")),
+                    ..Default::default()
+                });
+                return TestRun { child: child_slot };
+            }
+        };
+        let xml_path = report_dir.path().join("report.xml");
         let args = test_args(pytest, ids, &xml_path.to_string_lossy());
         let extra = BTreeMap::from([
             ("PYTHONIOENCODING".to_owned(), "utf-8".to_owned()),
@@ -78,7 +85,6 @@ impl TestRun {
         cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
         hide_window(&mut cmd);
         let started = Instant::now();
-        let child_slot = Arc::new(Mutex::new(None));
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
@@ -137,7 +143,7 @@ impl TestRun {
                 let _ = r.join();
             }
             let xml = if pytest { std::fs::read_to_string(&xml_path).ok() } else { None };
-            let _ = std::fs::remove_file(&xml_path);
+            drop(report_dir);
             let output = output.lock().map(|o| o.clone()).unwrap_or_default();
             on_done(TestRunResult {
                 exit_code: code,
@@ -164,6 +170,32 @@ mod unit {
     use super::*;
     use forge_core::testing::{parse_unittest, unittest_id, unittest_modules};
     use std::sync::mpsc::channel;
+
+    #[test]
+    fn pytest_report_uses_a_private_directory_and_is_removed_afterwards() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(python) = crate::python::find_python(dir.path(), None) else { return };
+        // A tiny pytest stand-in makes this independent of installed packages.
+        std::fs::write(dir.path().join("pytest.py"), "import sys,pathlib\np=pathlib.Path(next(a.split('=',1)[1] for a in sys.argv if a.startswith('--junitxml=')))\nprint(p)\np.write_text('<testsuites/>')\n").unwrap();
+        let (tx, rx) = channel();
+        let _run = TestRun::start(
+            &python,
+            dir.path(),
+            true,
+            &[],
+            |_| {},
+            move |r| {
+                tx.send(r).unwrap();
+            },
+        );
+        let result = rx.recv_timeout(Duration::from_secs(30)).unwrap();
+        assert_eq!(result.exit_code, Some(0), "{}", result.output);
+        assert_eq!(result.xml.as_deref(), Some("<testsuites/>"));
+        let report = Path::new(result.output.trim());
+        assert_ne!(report.parent().unwrap(), std::env::temp_dir(), "report is exposed in the shared temp directory");
+        assert!(!report.exists());
+        assert!(!report.parent().unwrap().exists(), "private directory was not cleaned up");
+    }
 
     #[test]
     fn discovers_test_files_and_runs_them_with_unittest() {

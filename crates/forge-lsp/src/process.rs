@@ -149,6 +149,9 @@ impl ServerProcess {
     }
 
     pub fn stop(&self) {
+        // Settle request futures on the caller before tearing down its executor.
+        // EOF may reach the reader much later (or while a callback is blocked).
+        self.client.dispose("the language server stopped");
         if let Ok(mut c) = self.child.lock() {
             let _ = c.kill();
         }
@@ -170,18 +173,21 @@ mod tests {
         let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
         let script = "import sys,time\nlength=0\nwhile True:\n    line=sys.stdin.buffer.readline()\n    if line in (b'\\r\\n',b'\\n'): break\n    if line.lower().startswith(b'content-length:'): length=int(line.split(b':',1)[1])\nsys.stdin.buffer.read(length)\nbody=b'{\"jsonrpc\":\"2.0\",\"method\":\"hold\",\"params\":{}}'\nsys.stdout.buffer.write(('Content-Length: %d\\r\\n\\r\\n'%len(body)).encode()+body)\nsys.stdout.buffer.flush()\ntime.sleep(60)\n";
         let program = Path::new(if cfg!(windows) { "python" } else { "python3" });
-        let process = match ServerProcess::spawn(program, &["-I", "-S", "-u", "-c", script], &std::env::temp_dir(), |_| {}) {
-            Ok(p) => p,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
-            Err(e) => panic!("{e}"),
-        };
+        let process =
+            match ServerProcess::spawn(program, &["-I", "-S", "-u", "-c", script], &std::env::temp_dir(), |_| {}) {
+                Ok(p) => p,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+                Err(e) => panic!("{e}"),
+            };
         let gate = release.clone();
         let (entered, received) = std::sync::mpsc::channel();
         process.client.on_notification("hold", move |_| {
             entered.send(()).unwrap();
             let (lock, condition) = &*gate;
             let mut released = lock.lock().unwrap();
-            while !*released { released = condition.wait(released).unwrap(); }
+            while !*released {
+                released = condition.wait(released).unwrap();
+            }
         });
         process.client.notify("hold", serde_json::Value::Null);
         received.recv_timeout(std::time::Duration::from_secs(10)).unwrap();

@@ -25,7 +25,8 @@ pub fn sort_and_filter(dir: &Path, raw: Vec<(String, bool)>) -> Vec<DirEntry> {
         .filter(|(name, _)| !HIDDEN.contains(&name.as_str()))
         .map(|(name, is_dir)| DirEntry { path: dir.join(&name), name, is_dir })
         .collect();
-    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+    // Normalize each name once, not twice for every sorting comparison.
+    entries.sort_by_cached_key(|entry| (!entry.is_dir, entry.name.to_lowercase()));
     entries
 }
 

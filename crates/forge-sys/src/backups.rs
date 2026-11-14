@@ -43,10 +43,12 @@ impl Backups {
     }
 
     pub fn write(&self, data: &BackupData) -> io::Result<()> {
-        std::fs::create_dir_all(&self.dir)?;
-        // A half-written backup just fails to parse and is skipped.
-        let json = serde_json::to_string(data).map_err(io::Error::other)?;
-        std::fs::write(self.dir.join(backup_name(&data.path)), json)
+        use std::io::Write;
+        crate::text_file::write_atomic(&self.dir.join(backup_name(&data.path)), |file| {
+            let mut writer = io::BufWriter::new(file);
+            serde_json::to_writer(&mut writer, data).map_err(io::Error::other)?;
+            writer.flush()
+        })
     }
 
     pub fn remove(&self, path: &str) -> io::Result<()> {
@@ -164,6 +166,20 @@ mod tests {
 
     fn data(path: &str, text: &str) -> BackupData {
         BackupData { path: path.into(), text: text.into(), encoding: Encoding::Utf8, eol: "LF".into(), time: 1 }
+    }
+
+    #[test]
+    fn writing_a_backup_does_not_modify_a_hardlinked_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let victim = dir.path().join("private.txt");
+        std::fs::write(&victim, "keep me").unwrap();
+        let store = dir.path().join("backups");
+        std::fs::create_dir(&store).unwrap();
+        std::fs::hard_link(&victim, store.join(backup_name("/project/main.py"))).unwrap();
+        let backups = Backups::new(store);
+        backups.write(&data("/project/main.py", "edited")).unwrap();
+        assert_eq!(std::fs::read_to_string(victim).unwrap(), "keep me");
+        assert_eq!(backups.list()[0].text, "edited");
     }
 
     #[test]

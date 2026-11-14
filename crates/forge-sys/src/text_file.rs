@@ -123,15 +123,23 @@ pub fn read_text_file(path: &Path, force: bool, encoding: Option<Encoding>) -> i
 /// Write a file in an encoding. Written to a temporary file next to it and
 /// then moved into place, so a crash mid-save never leaves half a file.
 pub fn write_text_file(path: &Path, text: &str, encoding: Encoding) -> io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
     let bytes = encode(text, encoding);
+    write_atomic(path, |file| file.write_all(&bytes))
+}
+
+/// Stream a replacement into an exclusively created sibling, then atomically
+/// replace the directory entry. Never truncate an existing link's target.
+pub(crate) fn write_atomic(path: &Path, write: impl FnOnce(&mut std::fs::File) -> io::Result<()>) -> io::Result<()> {
+    if let Some(dir) = path.parent() {
+        if !dir.as_os_str().is_empty() {
+            std::fs::create_dir_all(dir)?;
+        }
+    }
     let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
     // Exclusive, unpredictable creation avoids following a planted symlink/hardlink.
     // Keep the old file intact if writing or replacement fails.
     let mut temp = tempfile::NamedTempFile::new_in(parent)?;
-    temp.write_all(&bytes)?;
+    write(temp.as_file_mut())?;
     if let Ok(metadata) = std::fs::metadata(path) {
         temp.as_file().set_permissions(metadata.permissions())?;
     }
@@ -141,6 +149,20 @@ pub fn write_text_file(path: &Path, text: &str, encoding: Encoding) -> io::Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_atomic_write_preserves_previous_contents_and_removes_staging_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, "previous").unwrap();
+        let result = write_atomic(&path, |file| {
+            file.write_all(b"partial")?;
+            Err(io::Error::other("simulated disk error"))
+        });
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "previous");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
 
     #[test]
     fn saving_never_overwrites_a_preexisting_temporary_path() {
