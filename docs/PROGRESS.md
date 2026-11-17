@@ -165,7 +165,7 @@ with the same text, and the old source and tests. This ledger is how work resume
 - [x] IDEA-09 Show database relationships (Database explorer)
 - [x] IDEA-10 Navigate from schema elements to relevant code (Database explorer)
 - [x] IDEA-11 Track events through an application: where they originate, which handlers process them, what gets triggered and where they end up (Event-flow visualiser) What's the highest? What's the highest subscription you can get, but no, you can get plus and then like MVP plus like is there anything above that because you did law it yeah but that's why that's technology, isn't it? I think after they die though just immortalize it freaking Edward she be red brush sorry, my boy who's deaf and blind years you learn oh you're number three got you there's him he doesn't get knocked off he literally he was mid building a bridge he got hit by a bow and didn't fall off and he was at the edge are we supposed to get in there though are we supposed to get in uses little diagonal one you're gonna lose this guy fuck off they didn't yeah really far out yeah you're fucked bro what insane either insane machine this streak's not looking pretty secure unless you'd come back here but I don't think so this what happens when you don't use claw if I had claw I would have it done by now it would be battle
-- [x] IDEA-12 Support asynchronous and event-driven applications (Event-flow visualiser)
+- [x] IDEA-12 Support asynchronous and event-driven applications (Event-flow visualiser)+
 - [x] IDEA-13 Visualise object references, memory allocations and object lifetimes (Memory explorer)
 - [x] IDEA-14 Inspect memory usage during execution (Memory explorer)
 - [x] IDEA-15 Identify unexpected object retention (Memory explorer)

@@ -666,9 +666,6 @@ fn api_to_csv_workflow_uses_native_controls_and_runs_the_generated_python(cx: &m
     cx.simulate_click(url.center(), gpui_kit::Modifiers::default());
     cx.simulate_input(&format!("http://{address}/users"));
     cx.run_until_parked();
-    let api_settings = cx.debug_bounds("connect-api-settings").unwrap();
-    cx.simulate_click(api_settings.center(), gpui_kit::Modifiers::default());
-    cx.run_until_parked();
     let auth = cx.debug_bounds("connect-auth").unwrap();
     cx.simulate_click(auth.center(), gpui_kit::Modifiers::default());
     cx.run_until_parked();

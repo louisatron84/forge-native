@@ -5,7 +5,10 @@ use forge_core::{
     box_code::auth_env,
     boxes::{new_api_box, new_request, rename_box, ApiBox, BoxAuth, KeyValue},
 };
-use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
+use gpui_kit::component::{
+    input::{Input, InputEvent, InputState, Textarea, TextareaState},
+    Sizable,
+};
 use gpui_kit::{
     div, AnyElement, App, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement, ParentElement,
     Render, StatefulInteractiveElement, Styled, Subscription, Window,
@@ -81,9 +84,8 @@ pub struct ConnectPanel {
     pub request: usize,
     pub has_project: bool,
     pub status: String,
-    show_api: bool,
-    show_advanced: bool,
-    show_code: bool,
+    show_query: bool,
+    show_headers: bool,
     pub testing: bool,
     pub env_ignored: bool,
     response_preview: Option<ResponsePreview>,
@@ -243,9 +245,16 @@ impl ConnectPanel {
                             .items_center()
                             .gap(t.px(6.))
                             .cursor_pointer()
-                            .child(div().text_color(t.heat_2).child(if checked { "☑" } else { "☐" }))
-                            .child(label)
-                            .child(div().text_color(t.fg_muted).text_size(t.px(10.)).child(field.sample.clone()))
+                            .child(div().text_color(t.info).child(if checked { "☑" } else { "☐" }))
+                            .child(div().flex_none().font_family(crate::theme::CODE_FONT).child(label))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .text_ellipsis()
+                                    .whitespace_nowrap()
+                                    .text_color(t.fg_muted)
+                                    .child(field.sample.clone()),
+                            )
                             .on_click(cx.listener(move |p, _, _, cx| {
                                 if let Some(r) = p
                                     .selected
@@ -273,66 +282,6 @@ impl ConnectPanel {
         let Some(api) = self.current() else { return div().into_any_element() };
         let Some(request) = api.requests.get(self.request) else { return div().into_any_element() };
         let Some(preview) = &self.response_preview else { return div().into_any_element() };
-        let code = forge_core::box_code::generate_block(api, api.target.mode == "new");
-        let code_header = div()
-            .flex_none()
-            .px(t.px(10.))
-            .py(t.px(6.))
-            .border_b_1()
-            .border_color(t.border)
-            .bg(t.raised)
-            .text_size(t.px(10.))
-            .font_family(crate::theme::CODE_FONT)
-            .text_color(t.fg_muted)
-            .child(format!("{} · generated Python", api.target.file));
-        let mut line_state = forge_text::tokenizer::LineState::Normal;
-        let code_lines = code.lines().enumerate().map(|(line_number, line)| {
-            let (tokens, next_state) = forge_text::tokenizer::tokenize_line(line, line_state);
-            line_state = next_state;
-            let chars = line.chars().collect::<Vec<_>>();
-            let mut cursor = 0;
-            let mut spans = Vec::new();
-            for token in tokens {
-                let start = token.start.min(chars.len());
-                let end = token.end.min(chars.len());
-                if start > cursor {
-                    spans
-                        .push(div().child(chars[cursor..start].iter().copied().collect::<String>()).into_any_element());
-                }
-                if end > start {
-                    spans.push(
-                        div()
-                            .text_color(t.token_style(token.kind).0)
-                            .child(chars[start..end].iter().copied().collect::<String>())
-                            .into_any_element(),
-                    );
-                    cursor = end;
-                }
-            }
-            if cursor < chars.len() {
-                spans.push(div().child(chars[cursor..].iter().copied().collect::<String>()).into_any_element());
-            }
-            div()
-                .id(("connect-generated-line", line_number))
-                .flex()
-                .flex_none()
-                .whitespace_nowrap()
-                .font_family(crate::theme::CODE_FONT)
-                .text_size(t.px(10.))
-                .children(spans)
-        });
-        let code_body = div()
-            .id("connect-generated-python")
-            .debug_selector(|| "connect-generated-python".into())
-            .flex_1()
-            .min_h_0()
-            .min_w_0()
-            .overflow_x_scroll()
-            .overflow_y_scroll()
-            .p(t.px(10.))
-            .bg(t.bg)
-            .children(code_lines);
-
         let csv_header = div()
             .flex_none()
             .px(t.px(10.))
@@ -403,10 +352,9 @@ impl ConnectPanel {
             .min_w_0()
             .flex()
             .flex_col()
-            .border_l_1()
+            .h(t.px(50. + 21. * preview.rows.len() as f32))
+            .flex_none()
             .border_color(t.border)
-            .child(code_header)
-            .child(code_body)
             .child(csv_header)
             .child(csv_body)
             .into_any_element()
@@ -449,9 +397,8 @@ impl ConnectPanel {
             request: 0,
             has_project: false,
             status: String::new(),
-            show_api: false,
-            show_advanced: false,
-            show_code: false,
+            show_query: false,
+            show_headers: false,
             testing: false,
             env_ignored: false,
             inputs,
@@ -685,7 +632,7 @@ impl ConnectPanel {
     fn render_field(&self, field: Field, id: &'static str, label: &'static str, cx: &mut Context<Self>) -> AnyElement {
         let t = cx.global::<ForgeTheme>().0.clone();
         let input = match &self.inputs[&field] {
-            FieldInput::Line(input) => Input::new(input).w_full().into_any_element(),
+            FieldInput::Line(input) => Input::new(input).small().w_full().into_any_element(),
             FieldInput::Many(input) => Textarea::new(input).h(t.px(72.0)).w_full().into_any_element(),
         };
         div()
@@ -693,10 +640,13 @@ impl ConnectPanel {
             .min_w_0()
             .flex_none()
             .flex()
-            .flex_col()
-            .gap(t.px(3.0))
-            .child(div().text_color(t.fg_muted).text_size(t.px(11.0)).child(label))
-            .child(div().debug_selector(move || format!("connect-field-{id}")).w_full().min_w_0().child(input))
+            .items_center()
+            .gap(t.px(8.0))
+            .children(
+                (!label.is_empty())
+                    .then(|| div().w(t.px(102.)).flex_none().text_color(t.fg).text_size(t.px(11.0)).child(label)),
+            )
+            .child(div().debug_selector(move || format!("connect-field-{id}")).flex_1().min_w_0().child(input))
             .into_any_element()
     }
 }
@@ -752,6 +702,9 @@ impl Render for Toolbox {
             .flex()
             .flex_col()
             .text_size(t.px(12.0))
+            .p(t.px(10.))
+            .gap(t.px(6.))
+            .child("Drag a box onto a module on the Graph, or click to add one in a new file.")
             .child(
                 div()
                     .id("connect-add-box")
@@ -759,37 +712,59 @@ impl Render for Toolbox {
                     .px(t.px(8.0))
                     .py(t.px(8.0))
                     .cursor_pointer()
-                    .text_color(t.heat_2)
+                    .bg(t.raised)
+                    .text_color(t.fg)
+                    .hover(|s| s.bg(t.bg_hover))
                     .on_drag(ApiBoxDrag, |_, _, _, cx| cx.new(|_| ApiBoxGhost))
                     .on_click(move |_, _, cx| settings.update(cx, |_, cx| cx.emit(ConnectEvent::Add)))
-                    .child("+ API box"),
+                    .border_1()
+                    .border_color(t.line_strong)
+                    .flex()
+                    .flex_col()
+                    .child(div().font_weight(gpui_kit::FontWeight::BOLD).child("API"))
+                    .child(
+                        div()
+                            .text_color(t.fg)
+                            .text_size(t.px(11.))
+                            .child("Call a web API and save what it returns to a CSV file"),
+                    ),
             )
-            .children(rows)
-            .children(["Database", "File", "Schedule"].into_iter().map(|name| {
-                div()
-                    .px(t.px(8.))
-                    .py(t.px(5.))
-                    .text_color(t.fg_muted)
-                    .text_size(t.px(11.))
-                    .child(format!("{name} · coming later"))
-            }))
             .child(
                 div()
                     .id("connect-openapi")
                     .debug_selector(|| "connect-openapi".into())
                     .p(t.px(8.))
+                    .border_1()
+                    .border_color(t.line_strong)
                     .cursor_pointer()
-                    .text_color(t.heat_2)
-                    .child("+ API from OpenAPI…")
+                    .flex()
+                    .flex_col()
+                    .bg(t.raised)
+                    .hover(|s| s.bg(t.bg_hover))
+                    .child(div().font_weight(gpui_kit::FontWeight::BOLD).child("OpenAPI client"))
+                    .child(div().text_size(t.px(11.)).child("Write a Python client from an API's OpenAPI description"))
                     .on_click(move |_, _, cx| openapi.update(cx, |_, cx| cx.emit(ConnectEvent::OpenApi))),
             )
+            .children(["Database", "File", "Schedule"].into_iter().map(|name| {
+                div()
+                    .p(t.px(8.))
+                    .border_1()
+                    .border_color(t.border)
+                    .text_color(t.fg_muted)
+                    .flex()
+                    .flex_col()
+                    .bg(t.raised)
+                    .child(div().font_weight(gpui_kit::FontWeight::BOLD).child(name))
+                    .child(div().text_size(t.px(11.)).child("coming later"))
+            }))
+            .children(rows)
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
     #[gpui_kit::test]
-    fn successful_test_call_shows_python_and_tabular_csv_previews(cx: &mut gpui_kit::TestAppContext) {
+    fn successful_test_call_shows_inline_csv_preview(cx: &mut gpui_kit::TestAppContext) {
         cx.update(|cx| {
             gpui_kit::init(cx);
             cx.set_global(ForgeTheme(std::sync::Arc::new(crate::theme::Theme::molten())));
@@ -826,13 +801,13 @@ mod tests {
             );
         });
         cx.run_until_parked();
-        let settings = cx.debug_bounds("connect-test-settings").expect("Request controls remain in the left pane");
-        let output = cx.debug_bounds("connect-test-output").expect("Test results appear beside the request controls");
+        let _settings = cx.debug_bounds("connect-test-settings").expect("Request controls are visible");
+        let output = cx.debug_bounds("connect-test-output").expect("Test results appear within the settings form");
         assert!(
-            output.origin.x >= settings.origin.x + settings.size.width,
-            "The code and CSV previews should be laid out to the right of the request controls"
+            output.origin.y > cx.debug_bounds("connect-test-call").unwrap().origin.y,
+            "The CSV preview follows the test action"
         );
-        assert!(cx.debug_bounds("connect-generated-python").is_some());
+        assert!(cx.debug_bounds("connect-generated-python").is_none());
         assert!(cx.debug_bounds("connect-csv-table").is_some());
         assert!(cx.debug_bounds("connect-test-call").is_some());
         assert!(cx.debug_bounds("connect-response-field-0").is_some());
@@ -862,20 +837,12 @@ mod tests {
         });
         cx.run_until_parked();
         assert!(cx.debug_bounds("connect-field-url").is_some());
-        assert!(cx.debug_bounds("connect-field-headers").is_none());
-        assert!(cx.debug_bounds("connect-field-target").is_none());
-        let before = cx.debug_bounds("connect-test-call").expect("Test call stays next to the request fields");
-        let advanced = cx.debug_bounds("connect-advanced").expect("Optional request settings are collapsed");
-        cx.simulate_click(advanced.center(), gpui_kit::Modifiers::default());
-        cx.run_until_parked();
         assert!(cx.debug_bounds("connect-field-headers").is_some());
-        assert_eq!(
-            before.origin,
-            cx.debug_bounds("connect-test-call").unwrap().origin,
-            "Expanding options must not move the test call action"
+        assert!(cx.debug_bounds("connect-field-target").is_some());
+        assert!(
+            cx.debug_bounds("connect-field-base").unwrap().origin.y
+                < cx.debug_bounds("connect-field-url").unwrap().origin.y
         );
-        cx.simulate_click(advanced.center(), gpui_kit::Modifiers::default());
-        cx.run_until_parked();
         panel.read_with(cx, |p, _| {
             assert_eq!(p.boxes[0].requests[0].headers[0].value, "full");
             assert_eq!(p.boxes[0].requests[0].function_name.as_deref(), Some("weather_now"));
