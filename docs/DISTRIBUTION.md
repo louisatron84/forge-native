@@ -94,8 +94,10 @@ bootstrap dependency. Debian installation checked the binary, desktop entry and
 icon. Both uninstall checks preserved a marker in Forge's user-data directory.
 These checks do not launch the desktop UI or validate an upgrade from another
 version. The path-identity corrections at `4a01eab` passed both Windows and Linux
-[CI jobs](https://github.com/louisatron84/forge-native/actions/runs/44155599679)
-and their native installer jobs; the Intel Mac build result is not yet recorded.
+[CI jobs](https://github.com/louisatron84/forge-native/actions/runs/44155599679).
+The [packaging run](https://github.com/louisatron84/forge-native/actions/runs/44155600224)
+for that revision passed on Windows x64, Linux x64, Apple Silicon and Intel Mac,
+including the combined artifact's checksum and feed verification.
 
 The installed Windows update fixture can run independently using the workflow's
 `upgrade_only` option and a `package_run_id` containing a verified Windows artifact.
