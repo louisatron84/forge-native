@@ -105,6 +105,9 @@ feature, packages it as the separate `ForgeUpgradeSmoke` application at 1.0.0 an
 The controller verifies that files stay at 1.0.0 while the owner is alive, become
 1.0.1 after exit, and preserve user data through update and uninstall. Results
 and logs are private CI artifacts. Normal Windows packaging also runs this check.
+The [first hosted run](https://github.com/louisatron84/forge-native/actions/runs/44161247071)
+passed at `c25e839`. Its report records installed version 1.0.1, saved notes
+for 1.0.1 and unchanged user data after update and uninstall.
 The script refuses personal and self-hosted machines. This fixture does not test
 GPUI restart, unsaved-file prompts or the Welcome screen; those remain desktop
 release gates. It does not publish either test version to the native feed.
@@ -119,7 +122,39 @@ The following release gates remain open:
   `ideforfun`, dependency resolution and uninstall preserving user data.
 - Installed upgrade from one test version to the next, including unsaved-file
   cancellation, apply on close, restart and the one-time What's new notice.
-- Windows/Linux test workflow success for the final source revision, reference
-  desktop performance measurements, and the tester round.
+- Reference desktop performance measurements and the tester round. Release
+  candidates should carry the CI and packaging results for their exact revision.
 - Owner signing/publication and the Electron/website handover described in
   `docs/PLAN.md`. Nothing is published by the build workflow.
+
+## Desktop release acceptance
+
+Use a disposable Windows standard-user profile and Linux desktop sessions on
+X11 and Wayland. Record the build commit, artifact SHA-256, OS, CPU, GPU and
+display refresh rate. Preserve a copy of the original Electron test profile
+and use disposable projects for migration and uninstall checks.
+
+1. Install and launch Forge. Open a project, edit and save a file, and verify
+   that settings, shortcuts, layouts, recent projects and saved templates from
+   the Electron fixture are present after first launch. Relaunch and confirm
+   that native changes survive. Also check the Windows portable build, Linux
+   AppImage and Debian package, including replacement of `ideforfun` on Linux.
+2. On the installed Windows build and Linux AppImage, start on version A with
+   the release candidate feed configured. Make version B available on that test
+   feed. Wait for **Update ready** and confirm that A remains active. With a
+   dirty document, choose to restart and cancel the close prompt. Confirm the
+   document is still dirty and A still runs. Repeat and accept closing. Verify
+   that B starts, shows **What's new** once, and preserves the project and
+   settings. On a separate pass, close normally after the update is ready and
+   verify that the next launch uses B.
+3. Run the parity checks in `docs/PROGRESS.md` against the same project fixtures
+   used for the Electron tester round. Record the steps, expected and actual
+   results, and the build version for each failure.
+4. Measure both native and Electron 0.50.0 on the same reference machines.
+   Capture Forge process memory after idle, startup through the first editable
+   frame, input-to-screen latency and frame times while scrolling the same
+   100k-line file, and layout through the displayed frame for the same 400-node
+   graph. Report the sample count, timing method and raw results alongside the
+   thresholds in `docs/PLAN.md`. The model benchmarks in `docs/BASELINE.md` give
+   CPU timings for comparison. Use displayed-frame observations for the desktop
+   budgets.

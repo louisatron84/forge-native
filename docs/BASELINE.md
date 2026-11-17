@@ -101,3 +101,10 @@ at `5d37a7b` passed its checks and uploaded these optimized model measurements
 This hosted CPU differs from the reference desktop machines. The report explicitly
 leaves process memory, editable-window startup, input-to-screen latency, scrolling
 FPS and layout plus GPU drawing unmeasured; SHIP-09 remains open.
+
+The Windows Server 2022 job at `4a01eab` reported 0.0011 ms p95 for a warm
+middle-line edit, 0.0038 ms p95 for edit/delete and later-file syntax propagation,
+and 0.2152 ms p95 for 400-node graph layout. The Windows setup from the same
+revision measured 27,900,896 bytes and passed the 40 MB size target. See the
+[model report](https://github.com/louisatron84/forge-native/actions/runs/44155599679)
+and [packaging run](https://github.com/louisatron84/forge-native/actions/runs/44155600224).
