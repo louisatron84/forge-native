@@ -93,8 +93,21 @@ portable executable hashes, bundled runtime DLL, and absence of the vcredist
 bootstrap dependency. Debian installation checked the binary, desktop entry and
 icon. Both uninstall checks preserved a marker in Forge's user-data directory.
 These checks do not launch the desktop UI or validate an upgrade from another
-version. Later Windows path-identity corrections still need their own native
-build/test run before release.
+version. The path-identity corrections at `4a01eab` passed both Windows and Linux
+[CI jobs](https://github.com/louisatron84/forge-native/actions/runs/44155599679)
+and their native installer jobs; the Intel Mac build result is not yet recorded.
+
+The installed Windows update fixture can run independently using the workflow's
+`upgrade_only` option and a `package_run_id` containing a verified Windows artifact.
+It builds a console fixture with the optional `forge-update/release-validation`
+feature, packages it as the separate `ForgeUpgradeSmoke` application at 1.0.0 and
+1.0.1, and uses Forge's own download, persisted notes and apply-on-exit methods.
+The controller verifies that files stay at 1.0.0 while the owner is alive, become
+1.0.1 after exit, and preserve user data through update and uninstall. Results
+and logs are private CI artifacts. Normal Windows packaging also runs this check.
+The script refuses personal and self-hosted machines. This fixture does not test
+GPUI restart, unsaved-file prompts or the Welcome screen; those remain desktop
+release gates. It does not publish either test version to the native feed.
 
 The following release gates remain open:
 

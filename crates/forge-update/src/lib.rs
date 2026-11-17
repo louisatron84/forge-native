@@ -161,6 +161,13 @@ impl Updater {
         Ok(())
     }
 
+    /// The isolated installed-update fixture supplies a local feed instead of
+    /// the public release host. This adapter is excluded from normal app builds.
+    #[cfg(feature = "release-validation")]
+    pub fn check_for_validation(&self, manager: UpdateManager) -> Result<(), String> {
+        self.check_managed(manager, true)
+    }
+
     /// Arm the installer only after every window has accepted closing; it waits
     /// for this process to exit, with no work scheduled while the user is coding.
     pub fn install_on_exit(&self, restart: bool) -> Result<(), String> {
