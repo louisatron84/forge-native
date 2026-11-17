@@ -86,6 +86,16 @@ The downloaded bundle in `releases/m5-website` passes local verification of all
 This is build and archive evidence for that commit, not installation validation
 or proof that the latest source has passed the native build jobs.
 
+The [2026-11-17 packaging run](https://github.com/louisatron84/forge-native/actions/runs/44149591448)
+at `1985093` also passed Windows x64 and Linux x64 build/feed verification and
+hosted install/uninstall checks. Windows checks confirmed the installed and
+portable executable hashes, bundled runtime DLL, and absence of the vcredist
+bootstrap dependency. Debian installation checked the binary, desktop entry and
+icon. Both uninstall checks preserved a marker in Forge's user-data directory.
+These checks do not launch the desktop UI or validate an upgrade from another
+version. Later Windows path-identity corrections still need their own native
+build/test run before release.
+
 The following release gates remain open:
 
 - Windows clean-user installation, portable launch, uninstall preserving user

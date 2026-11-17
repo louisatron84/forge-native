@@ -816,7 +816,7 @@ impl Workspace {
 
     /// Open a folder that exists, with the tabs and layout it had last time.
     pub fn open_folder(&mut self, folder: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        let folder = std::fs::canonicalize(&folder).map(strip_verbatim).unwrap_or(folder);
+        let folder = forge_sys::files::canonical_path(&folder);
         if !folder.is_dir() {
             return self.alert(format!("{} isn't a folder.", folder.display()), window, cx);
         }
@@ -1017,7 +1017,9 @@ impl Workspace {
     // ---------- documents ----------
 
     fn find_doc(&self, path: &str, cx: &App) -> Option<DocId> {
-        self.docs.iter().find(|(_, d)| same_path(d.read(cx).doc.path(), path)).map(|(id, _)| *id)
+        let find =
+            |path: &str| self.docs.iter().find(|(_, d)| same_path(d.read(cx).doc.path(), path)).map(|(id, _)| *id);
+        find(path).or_else(|| find(&forge_sys::files::canonical_path(Path::new(path)).to_string_lossy()))
     }
 
     pub(crate) fn is_dirty(&self, id: DocId, cx: &App) -> bool {
@@ -1030,7 +1032,8 @@ impl Workspace {
 
     /// Read a file into a new document. Ok(None): binary or huge and not forced.
     fn load_doc(&mut self, path: &Path, force: bool, cx: &mut Context<Self>) -> Result<Option<DocId>, String> {
-        let file = read_text_file(path, force, None).map_err(|e| e.to_string())?;
+        let path = forge_sys::files::canonical_path(path);
+        let file = read_text_file(&path, force, None).map_err(|e| e.to_string())?;
         match file {
             TextFile::Text { text, encoding, size } => {
                 let path_str = path.to_string_lossy().into_owned();
@@ -1789,15 +1792,6 @@ fn resolve_in_project(path: &str, root: &Path) -> String {
     }
     let rest = path.trim_start_matches("./").trim_start_matches(".\\");
     root.join(rest).to_string_lossy().into_owned()
-}
-
-/// `canonicalize` on Windows gives `\\?\C:\...`: use the plain form.
-fn strip_verbatim(p: PathBuf) -> PathBuf {
-    let s = p.to_string_lossy();
-    match s.strip_prefix(r"\\?\") {
-        Some(rest) if !rest.starts_with("UNC\\") => PathBuf::from(rest),
-        _ => p,
-    }
 }
 
 impl Focusable for Workspace {

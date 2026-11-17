@@ -64,6 +64,7 @@ impl Workspace {
                                     .await;
                                 this.update_in(cx, |ws, window, cx| match result {
                                     Ok(project) => {
+                                        let project = forge_sys::files::canonical_path(&project);
                                         if ws.root != root {
                                             ws.status_note(format!("Created {}", project.display()), cx);
                                             return;
