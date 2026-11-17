@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 import hashlib
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('forge_package', Path(__file__).parents[1] / 'package.py')
 package = importlib.util.module_from_spec(spec)
@@ -14,6 +15,43 @@ verify_spec.loader.exec_module(verifier)
 
 
 class WebsiteManifestTests(unittest.TestCase):
+    def test_windows_payload_carries_the_release_runtime_beside_the_executable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            redist = root / 'redist'
+            crt = redist / 'x64/Microsoft.VC143.CRT'
+            crt.mkdir(parents=True)
+            (crt / 'vcruntime140.dll').write_bytes(b'VC runtime')
+            (crt / 'msvcp140.dll').write_bytes(b'C++ runtime')
+            payload = root / 'payload'
+            payload.mkdir()
+            with patch.dict(package.os.environ, {'FORGE_VC_REDIST': str(redist)}):
+                package.windows_runtime(payload)
+            self.assertEqual((payload / 'vcruntime140.dll').read_bytes(), b'VC runtime')
+            self.assertEqual((payload / 'msvcp140.dll').read_bytes(), b'C++ runtime')
+            (crt / 'vcruntime140.dll').unlink()
+            with patch.dict(package.os.environ, {'FORGE_VC_REDIST': str(redist)}):
+                with self.assertRaisesRegex(ValueError, 'vcruntime140.dll'):
+                    package.windows_runtime(payload)
+
+    def test_checksum_file_must_match_every_download_exactly_once(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            name = 'Forge-test.zip'
+            (folder / name).write_bytes(b'package')
+            digest = hashlib.sha256(b'package').hexdigest()
+            record = {'file': name, 'bytes': 7, 'sha256': digest}
+            (folder / 'test.artifact.json').write_text(json.dumps({'version': '1.0.0', 'downloads': [record]}))
+            package.manifest(folder, '1.0.0')
+            verifier.verify(folder)
+            correct = f'{digest}  {name}\n'
+            for checksums in ('', f'{"0" * 64}  {name}\n', correct * 2,
+                              correct + f'{digest}  untracked.zip\n'):
+                with self.subTest(checksums=checksums):
+                    (folder / 'SHA256SUMS').write_text(checksums)
+                    with self.assertRaisesRegex(ValueError, 'checksum'):
+                        verifier.verify(folder)
+
     def test_feed_hashes_are_checked_even_when_website_metadata_was_replaced(self):
         with tempfile.TemporaryDirectory() as temp:
             folder = Path(temp)

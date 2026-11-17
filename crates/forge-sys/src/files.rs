@@ -11,6 +11,23 @@ use std::path::{Path, PathBuf};
 /// Folders the tree, quick open and search never show.
 pub const HIDDEN: [&str; 7] = [".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache"];
 
+/// Existing file identity, including Windows 8.3 aliases. Keep ordinary paths
+/// for subprocesses and saved state; missing files retain the caller's spelling.
+pub fn canonical_path(path: &Path) -> PathBuf {
+    let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    #[cfg(windows)]
+    {
+        let text = resolved.to_string_lossy();
+        if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{rest}"));
+        }
+        if let Some(rest) = text.strip_prefix(r"\\?\") {
+            return PathBuf::from(rest);
+        }
+    }
+    resolved
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DirEntry {
     pub name: String,
@@ -137,6 +154,17 @@ pub fn delete_entry(path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canonical_paths_resolve_existing_names_without_verbatim_prefixes() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("nested")).unwrap();
+        let expected = canonical_path(dir.path());
+        assert_eq!(canonical_path(&dir.path().join("nested/..")), expected);
+        assert!(!expected.to_string_lossy().starts_with(r"\\?\"));
+        let missing = dir.path().join("missing.txt");
+        assert_eq!(canonical_path(&missing), missing);
+    }
 
     fn e(name: &str, is_dir: bool) -> (String, bool) {
         (name.to_owned(), is_dir)

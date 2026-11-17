@@ -29,6 +29,15 @@ def verify(folder):
                 digest = hashlib.file_digest(stream, 'sha256').hexdigest()
             if digest.lower() != asset['SHA256'].lower() or path.stat().st_size != asset['Size']:
                 raise ValueError(f'Invalid update package: {path.name}')
+    expected = {item['file']: item['sha256'] for item in manifest['downloads']}
+    checksums = {}
+    for line in (folder / 'SHA256SUMS').read_text().splitlines():
+        digest, separator, name = line.partition('  ')
+        if not separator or name in checksums or expected.get(name) != digest:
+            raise ValueError(f'Invalid or duplicate checksum entry: {line}')
+        checksums[name] = digest
+    if checksums != expected:
+        raise ValueError('Missing download checksum entries')
     print(f'Verified {len(names)} downloads and all update feeds')
 
 

@@ -29,6 +29,37 @@ def run(*args):
     subprocess.run([str(a) for a in args], cwd=ROOT, check=True)
 
 
+def windows_runtime(payload):
+    """Deploy the toolchain's release CRT locally; no system-wide prerequisite install.
+
+    https://learn.microsoft.com/cpp/windows/choosing-a-deployment-method
+    FORGE_VC_REDIST points to a Visual Studio Redist/MSVC/<version> directory.
+    """
+    configured = os.environ.get('FORGE_VC_REDIST') or os.environ.get('VCToolsRedistDir')
+    if configured:
+        redist = Path(configured)
+    else:
+        vswhere = Path(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)')) / 'Microsoft Visual Studio/Installer/vswhere.exe'
+        if not vswhere.is_file():
+            raise ValueError('Set FORGE_VC_REDIST to the Visual Studio release runtime directory')
+        installation = subprocess.check_output([str(vswhere), '-latest', '-products', '*',
+            '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
+            '-property', 'installationPath'], text=True).strip()
+        versions = list((Path(installation) / 'VC/Redist/MSVC').glob('[0-9]*')) if installation else []
+        if not versions:
+            raise ValueError('Visual Studio release runtime missing; set FORGE_VC_REDIST')
+        redist = max(versions, key=lambda p: tuple(int(n) for n in p.name.split('.')))
+    candidates = sorted(redist.glob('x64/Microsoft.VC*.CRT'))
+    crt = next((p for p in reversed(candidates) if (p / 'vcruntime140.dll').is_file()), None)
+    if crt is None:
+        raise ValueError(f'Missing x64 release vcruntime140.dll in {redist}')
+    for name in ('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll', 'msvcp140_1.dll',
+                 'msvcp140_2.dll', 'msvcp140_atomic_wait.dll', 'msvcp140_codecvt_ids.dll', 'concrt140.dll'):
+        source = crt / name
+        if source.is_file():
+            shutil.copy2(source, payload / name)
+
+
 def update_packages(payload, folder, version, system, arch, stage):
     """Keep feed/package names intact: the feed references those exact filenames."""
     output = stage / 'updates'
@@ -40,9 +71,7 @@ def update_packages(payload, folder, version, system, arch, stage):
                '--runtime', ('win' if system == 'windows' else 'linux') + '-' + arch,
                '--channel', ('win' if system == 'windows' else 'linux') + '-' + arch,
                '--outputDir', str(output), '--releaseNotes', str(ROOT / 'packaging/RELEASE_NOTES.md')]
-    if system == 'windows':
-        command += ['--framework', 'vcredist143-x64']
-    else:
+    if system != 'windows':
         # A small raster version of the repository's F mark, without build-time image libraries.
         def chunk(kind, data):
             return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
@@ -126,6 +155,8 @@ def main():
         payload.mkdir()
         executable_name = 'forge.exe' if system == 'windows' else 'forge'
         shutil.copy2(binary, payload / executable_name)
+        if system == 'windows':
+            windows_runtime(payload)
         for name in ('LICENSE', 'THIRD_PARTY.md'):
             shutil.copy2(ROOT / name, payload / name)
         instructions = (ROOT / 'packaging/README.txt').read_text(encoding='utf-8')

@@ -81,7 +81,25 @@ pub fn repo_status(folder: &str) -> Option<(String, RepoStatus)> {
 pub fn tree_status(folder: &str) -> Option<StatusMap> {
     let root = toplevel(folder)?;
     let out = run_git(folder, &["status", "--porcelain=v1", "-z", "--untracked-files=all"], "");
-    out.ok().then(|| build_status_map(&root, folder, &parse_porcelain(&out.stdout)))
+    out.ok().then(|| {
+        // Git expands Windows short names in its repository root. Filter with
+        // the same identity, then retain the caller's paths for tree row keys.
+        let canonical = crate::files::canonical_path(Path::new(folder));
+        let opened = canonical.to_string_lossy();
+        #[cfg(windows)]
+        let opened = if root.contains('\\') { opened.replace('/', "\\") } else { opened.replace('\\', "/") };
+        let map = build_status_map(&root, &opened, &parse_porcelain(&out.stdout));
+        let restore = |path: String| {
+            Path::new(&path)
+                .strip_prefix(&canonical)
+                .map(|rel| Path::new(folder).join(rel).to_string_lossy().into_owned())
+                .unwrap_or(path)
+        };
+        StatusMap {
+            files: map.files.into_iter().map(|(path, kind)| (restore(path), kind)).collect(),
+            folders: map.folders.into_iter().map(restore).collect(),
+        }
+    })
 }
 
 /// The diff of one file: staged (index vs HEAD) or not (working tree vs index).
@@ -360,6 +378,20 @@ mod tests {
 
     fn has_git() -> bool {
         !run_captured("git", &["--version".into()], &std::env::temp_dir(), &[], "", Duration::from_secs(20)).not_found
+    }
+
+    #[test]
+    fn tree_badges_accept_forward_slashes_on_windows_too() {
+        if !has_git() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_string_lossy().replace('\\', "/");
+        assert!(init(&root).ok);
+        std::fs::write(dir.path().join("new.py"), "").unwrap();
+        let map = tree_status(&root).unwrap();
+        assert_eq!(map.files.len(), 1);
+        assert_eq!(map.files.values().next(), Some(&ChangeKind::Untracked));
     }
 
     #[test]

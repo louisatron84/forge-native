@@ -297,7 +297,12 @@ fn database_diagram_reads_schema_and_navigates_to_model_source(cx: &mut TestAppC
     let open = cx.debug_bounds("diagram-source").unwrap();
     cx.simulate_click(open.center(), Default::default());
     cx.run_until_parked();
-    ws.read_with(cx, |ws, cx| assert_eq!(ws.active_doc().unwrap().read(cx).doc.path(), path.to_string_lossy()));
+    ws.read_with(cx, |ws, cx| {
+        assert_eq!(
+            ws.active_doc().unwrap().read(cx).doc.path(),
+            forge_sys::files::canonical_path(&path).to_string_lossy()
+        )
+    });
 }
 
 #[gpui_kit::test]
@@ -1640,6 +1645,8 @@ fn editor_and_terminal_stay_docked_and_owner_closes_floating_windows(cx: &mut Te
 }
 
 fn setup(cx: &mut TestAppContext) -> (tempfile::TempDir, Entity<Workspace>, &mut VisualTestContext) {
+    // Workspace opening starts real filesystem/process I/O (including LSP).
+    cx.executor().allow_parking();
     let data = tempfile::tempdir().unwrap();
     cx.update(|cx| {
         gpui_kit::init(cx);
@@ -1694,7 +1701,7 @@ fn reopening_the_last_project_still_works_when_explicitly_enabled(cx: &mut TestA
         cx.global_mut::<AppState>().settings.reopen_last_project = true;
         app_state::state(cx).user.add_recent(&project.path().to_string_lossy()).unwrap();
         ws.reopen_last(window, cx);
-        assert_eq!(ws.root.as_deref(), Some(project.path()));
+        assert_eq!(ws.root, Some(forge_sys::files::canonical_path(project.path())));
     });
 }
 
@@ -1715,7 +1722,9 @@ fn a_new_project_folder_is_created_in_the_location_the_user_chooses(cx: &mut Tes
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
     assert!(parent.path().join("my-project").is_dir());
-    ws.read_with(cx, |ws, _| assert_eq!(ws.root, Some(parent.path().join("my-project"))));
+    ws.read_with(cx, |ws, _| {
+        assert_eq!(ws.root, Some(forge_sys::files::canonical_path(&parent.path().join("my-project"))))
+    });
 }
 
 #[gpui_kit::test]
@@ -1727,7 +1736,12 @@ fn a_new_file_without_a_project_uses_the_selected_save_location(cx: &mut TestApp
     cx.simulate_new_path_selection(|_| Some(path.clone()));
     cx.run_until_parked();
     assert!(path.is_file());
-    ws.read_with(cx, |ws, cx| assert_eq!(ws.active_doc().unwrap().read(cx).doc.path(), path.to_string_lossy()));
+    ws.read_with(cx, |ws, cx| {
+        assert_eq!(
+            ws.active_doc().unwrap().read(cx).doc.path(),
+            forge_sys::files::canonical_path(&path).to_string_lossy()
+        )
+    });
 }
 
 #[gpui_kit::test]
@@ -1794,7 +1808,7 @@ fn breakpoint_shortcut_gutter_markers_edits_and_workspace_persistence(cx: &mut T
         assert_eq!(ws.debug.breakpoints.saved[0].line, 2);
         let state = ws.capture_state(cx);
         assert_eq!(state.breakpoints[0].line, 2);
-        assert_eq!(state.breakpoints[0].path, file.to_string_lossy());
+        assert_eq!(state.breakpoints[0].path, forge_sys::files::canonical_path(&file).to_string_lossy());
     });
 }
 
