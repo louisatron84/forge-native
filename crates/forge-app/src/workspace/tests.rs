@@ -1640,6 +1640,8 @@ fn editor_and_terminal_stay_docked_and_owner_closes_floating_windows(cx: &mut Te
 }
 
 fn setup(cx: &mut TestAppContext) -> (tempfile::TempDir, Entity<Workspace>, &mut VisualTestContext) {
+    // Workspace opening starts real filesystem/process I/O (including LSP).
+    cx.executor().allow_parking();
     let data = tempfile::tempdir().unwrap();
     cx.update(|cx| {
         gpui_kit::init(cx);

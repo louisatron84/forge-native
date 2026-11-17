@@ -68,3 +68,20 @@ Python multiline strings and JSONC comments.
 These are CPU model timings, **not** input-to-screen latency or scrolling FPS.
 Graph GPU draw time, whole-session idle memory and the supplied desktop latency
 figures remain unverified; no performance budget is marked complete by this change.
+
+## Output backpressure investigation (2026-11-17)
+
+The existing release benchmark pushes 200,000 alternating stdout/stderr lines
+through a 200,000-byte queue and drains the retained output. Removing the first
+element of a vector repeatedly shifted all remaining pieces during trimming.
+Using a deque keeps those removals constant time and preserves stream order.
+
+| CPU workload | Before | After |
+| --- | --- | --- |
+| Alternating-stream queue, push/trim/drain | 24,223.162 ms | 11.787 ms |
+
+Run `cargo test -p forge-core --release -j 1 alternating_stream_trim_benchmark -- --ignored --nocapture`.
+These are single-run Windows x64 optimized measurements. A separate regression
+test verifies that trimming at a byte inside a UTF-8 character retains subsequent
+complete lines instead of discarding the whole piece. This measurement does not
+establish any of the remaining desktop performance budgets.

@@ -71,3 +71,28 @@ Use a clean output directory for each version (`--output releases/<version>`).
 The installed upgrade path still requires separate release validation. macOS/Linux artifacts
 must pass their native build jobs and installation tests before being advertised
 as supported public releases.
+
+## Validation status (2026-11-17)
+
+The [native packaging run](https://github.com/louisatron84/forge-native/actions/runs/43628447232)
+at commit `19ef511d005478760a208a2cef4c07083df360ac` built Windows x64,
+Linux x64, macOS ARM64 and macOS x64 successfully and combined their artifacts.
+The downloaded bundle in `releases/m5-website` passes local verification of all
+13 download records, every update-feed package hash and every `SHA256SUMS` entry.
+This is build and archive evidence for that commit, not installation validation
+or proof that the latest source has passed the native build jobs.
+
+The following release gates remain open:
+
+- Windows clean-user installation, portable launch, uninstall preserving user
+  data, and installation on a machine without the Visual C++ runtime. The
+  prerequisite installer may need elevation, so the no-admin requirement still
+  needs resolution/validation on that machine.
+- Linux AppImage launch on X11/Wayland, Debian installation/replacement of
+  `ideforfun`, dependency resolution and uninstall preserving user data.
+- Installed upgrade from one test version to the next, including unsaved-file
+  cancellation, apply on close, restart and the one-time What's new notice.
+- Windows/Linux test workflow success for the final source revision, reference
+  desktop performance measurements, and the tester round.
+- Owner signing/publication and the Electron/website handover described in
+  `docs/PLAN.md`. Nothing is published by the build workflow.

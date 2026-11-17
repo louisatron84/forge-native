@@ -41,6 +41,9 @@ impl LspClient {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = oneshot::channel();
         if let Ok(mut p) = self.pending.lock() {
+            // Hover/completion tasks are replaced while typing. Their receivers
+            // disappear even if the server never replies; retain only live work.
+            p.retain(|_, sender| !sender.is_canceled());
             p.insert(id, tx);
         }
         (self.send)(json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }));

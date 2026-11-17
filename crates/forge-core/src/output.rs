@@ -4,6 +4,7 @@
 //! and `src/shared/traceback.ts`.
 
 use regex::Regex;
+use std::collections::VecDeque;
 use std::sync::LazyLock;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,7 +48,7 @@ pub fn last_lines(text: &str, max: usize) -> (&str, usize) {
 /// keeps at most `max_chars` (dropping the oldest whole lines first).
 #[derive(Debug)]
 pub struct OutputQueue {
-    pieces: Vec<OutputPiece>,
+    pieces: VecDeque<OutputPiece>,
     chars: usize,
     dropped: usize,
     max_chars: usize,
@@ -55,7 +56,7 @@ pub struct OutputQueue {
 
 impl OutputQueue {
     pub fn new(max_chars: usize) -> Self {
-        Self { pieces: Vec::new(), chars: 0, dropped: 0, max_chars }
+        Self { pieces: VecDeque::new(), chars: 0, dropped: 0, max_chars }
     }
 
     pub fn size(&self) -> usize {
@@ -70,9 +71,9 @@ impl OutputQueue {
         if text.is_empty() {
             return;
         }
-        match self.pieces.last_mut() {
+        match self.pieces.back_mut() {
             Some(last) if last.stream == stream => last.text.push_str(text),
-            _ => self.pieces.push(OutputPiece { stream, text: text.to_owned() }),
+            _ => self.pieces.push_back(OutputPiece { stream, text: text.to_owned() }),
         }
         self.chars += text.len();
         if self.chars > self.max_chars {
@@ -90,24 +91,29 @@ impl OutputQueue {
             if first.text.len() <= excess {
                 self.dropped += count_lines(&first.text);
                 self.chars -= first.text.len();
-                self.pieces.remove(0);
+                self.pieces.pop_front();
                 continue;
             }
             // Cut at a line break so no line is shown half.
             let from = excess.saturating_sub(1);
-            let cut = first.text.get(from..).and_then(|s| s.find('\n')).map_or(first.text.len(), |i| from + i + 1);
+            // Search bytes: `from` can be inside a UTF-8 character, while a
+            // newline always ends at a valid character boundary.
+            let cut = first.text.as_bytes()[from..]
+                .iter()
+                .position(|b| *b == b'\n')
+                .map_or(first.text.len(), |i| from + i + 1);
             self.dropped += count_lines(&first.text[..cut]);
             self.chars -= cut;
             first.text.drain(..cut);
             if first.text.is_empty() {
-                self.pieces.remove(0);
+                self.pieces.pop_front();
             }
         }
     }
 
     /// Everything collected (and how many lines were dropped), emptying the queue.
     pub fn take(&mut self) -> (Vec<OutputPiece>, usize) {
-        let out = (std::mem::take(&mut self.pieces), self.dropped);
+        let out = (std::mem::take(&mut self.pieces).into_iter().collect(), self.dropped);
         self.chars = 0;
         self.dropped = 0;
         out
@@ -169,6 +175,32 @@ pub fn strip_ansi(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "manual release performance measurement"]
+    fn alternating_stream_trim_benchmark() {
+        let started = std::time::Instant::now();
+        let mut queue = OutputQueue::new(200_000);
+        for i in 0..200_000 {
+            queue.push(if i % 2 == 0 { Stream::Stdout } else { Stream::Stderr }, "x\n");
+        }
+        let (pieces, dropped) = queue.take();
+        assert_eq!(pieces.len() + dropped, 200_000);
+        for pair in pieces.windows(2) {
+            assert_ne!(pair[0].stream, pair[1].stream);
+        }
+        eprintln!("alternating_stream_trim_ms={:.3}", started.elapsed().as_secs_f64() * 1000.);
+    }
+
+    #[test]
+    fn trimming_inside_a_utf8_character_keeps_the_following_lines() {
+        let mut q = OutputQueue::new(12);
+        q.push(Stream::Stdout, "€€\nkeep\n");
+        q.push(Stream::Stdout, "x\n");
+        let (pieces, dropped) = q.take();
+        assert_eq!(dropped, 1);
+        assert_eq!(pieces, vec![OutputPiece { stream: Stream::Stdout, text: "keep\nx\n".into() }]);
+    }
 
     #[test]
     fn merges_neighbouring_pieces_of_the_same_stream_in_order() {

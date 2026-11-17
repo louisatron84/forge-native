@@ -57,6 +57,45 @@ jobs:
         run: python scripts/package.py --target ${{ matrix.target }} --velopack
       - name: Verify all downloads and update feeds
         run: python scripts/verify_release.py releases
+      - name: Windows install and uninstall smoke check
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installRoot = Join-Path $env:RUNNER_TEMP 'forge-install-smoke'
+          $settingsDir = Join-Path $env:APPDATA 'forge'
+          New-Item -ItemType Directory -Path $settingsDir -Force | Out-Null
+          $marker = Join-Path $settingsDir 'installer-smoke-marker.txt'
+          Set-Content -LiteralPath $marker -Value 'preserve user data'
+          # --silent prevents the post-install app launch:
+          # https://docs.velopack.io/packaging/operating-systems/windows
+          $setup = Start-Process -FilePath (Resolve-Path 'releases/Forge-win-x64-Setup.exe') -ArgumentList @('--silent', '--installto', ('"{0}"' -f $installRoot)) -WindowStyle Hidden -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { throw "Setup failed: $($setup.ExitCode)" }
+          $installed = Join-Path $installRoot 'current/forge.exe'
+          $expected = (Get-FileHash 'target/x86_64-pc-windows-msvc/release/forge.exe').Hash
+          if ((Get-FileHash -LiteralPath $installed).Hash -ne $expected) { throw 'Installed executable differs from build' }
+          $portable = Join-Path $env:RUNNER_TEMP 'forge-portable-smoke'
+          Expand-Archive -LiteralPath 'releases/Forge-win-x64-Portable.zip' -DestinationPath $portable
+          if ((Get-FileHash -LiteralPath (Join-Path $portable 'current/forge.exe')).Hash -ne $expected) { throw 'Portable executable differs from build' }
+          $uninstall = Start-Process -FilePath (Join-Path $installRoot 'Update.exe') -ArgumentList @('--silent', 'uninstall') -WindowStyle Hidden -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Uninstall failed: $($uninstall.ExitCode)" }
+          for ($attempt = 0; $attempt -lt 20 -and (Test-Path -LiteralPath $installed); $attempt++) { Start-Sleep -Milliseconds 500 }
+          if (Test-Path -LiteralPath $installed) { throw 'Uninstall left the installed executable' }
+          if ((Get-Content -LiteralPath $marker).Trim() -ne 'preserve user data') { throw 'Uninstall changed user data' }
+      - name: Linux Debian install and uninstall smoke check
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.config/forge"
+          printf '%s\n' 'preserve user data' > "$HOME/.config/forge/installer-smoke-marker.txt"
+          sudo apt-get install --yes ./releases/Forge-*-linux-x64.deb
+          test "$(dpkg-query -W -f='${Status}' forge)" = 'install ok installed'
+          cmp /usr/bin/forge target/x86_64-unknown-linux-gnu/release/forge
+          test -f /usr/share/applications/forge.desktop
+          test -f /usr/share/icons/hicolor/scalable/apps/forge.svg
+          sudo dpkg --remove forge
+          test ! -f /usr/bin/forge
+          test "$(cat "$HOME/.config/forge/installer-smoke-marker.txt")" = 'preserve user data'
       - uses: actions/upload-artifact@v4
         with:
           name: forge-${{ matrix.target }}

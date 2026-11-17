@@ -14,6 +14,24 @@ verify_spec.loader.exec_module(verifier)
 
 
 class WebsiteManifestTests(unittest.TestCase):
+    def test_checksum_file_must_match_every_download_exactly_once(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            name = 'Forge-test.zip'
+            (folder / name).write_bytes(b'package')
+            digest = hashlib.sha256(b'package').hexdigest()
+            record = {'file': name, 'bytes': 7, 'sha256': digest}
+            (folder / 'test.artifact.json').write_text(json.dumps({'version': '1.0.0', 'downloads': [record]}))
+            package.manifest(folder, '1.0.0')
+            verifier.verify(folder)
+            correct = f'{digest}  {name}\n'
+            for checksums in ('', f'{"0" * 64}  {name}\n', correct * 2,
+                              correct + f'{digest}  untracked.zip\n'):
+                with self.subTest(checksums=checksums):
+                    (folder / 'SHA256SUMS').write_text(checksums)
+                    with self.assertRaisesRegex(ValueError, 'checksum'):
+                        verifier.verify(folder)
+
     def test_feed_hashes_are_checked_even_when_website_metadata_was_replaced(self):
         with tempfile.TemporaryDirectory() as temp:
             folder = Path(temp)
