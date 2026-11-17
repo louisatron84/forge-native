@@ -71,10 +71,13 @@ jobs:
           $setup = Start-Process -FilePath (Resolve-Path 'releases/Forge-win-x64-Setup.exe') -ArgumentList @('--silent', '--installto', ('"{0}"' -f $installRoot)) -WindowStyle Hidden -Wait -PassThru
           if ($setup.ExitCode -ne 0) { throw "Setup failed: $($setup.ExitCode)" }
           $installed = Join-Path $installRoot 'current/forge.exe'
+          if (!(Test-Path -LiteralPath (Join-Path $installRoot 'current/vcruntime140.dll'))) { throw 'Installed app-local runtime missing' }
+          if ((Get-Content -Raw -LiteralPath (Join-Path $installRoot 'current/sq.version')) -match 'vcredist') { throw 'Setup still requires a system runtime install' }
           $expected = (Get-FileHash 'target/x86_64-pc-windows-msvc/release/forge.exe').Hash
           if ((Get-FileHash -LiteralPath $installed).Hash -ne $expected) { throw 'Installed executable differs from build' }
           $portable = Join-Path $env:RUNNER_TEMP 'forge-portable-smoke'
           Expand-Archive -LiteralPath 'releases/Forge-win-x64-Portable.zip' -DestinationPath $portable
+          if (!(Test-Path -LiteralPath (Join-Path $portable 'current/vcruntime140.dll'))) { throw 'Portable app-local runtime missing' }
           if ((Get-FileHash -LiteralPath (Join-Path $portable 'current/forge.exe')).Hash -ne $expected) { throw 'Portable executable differs from build' }
           $uninstall = Start-Process -FilePath (Join-Path $installRoot 'Update.exe') -ArgumentList @('--silent', 'uninstall') -WindowStyle Hidden -Wait -PassThru
           if ($uninstall.ExitCode -ne 0) { throw "Uninstall failed: $($uninstall.ExitCode)" }

@@ -12,3 +12,4 @@ against `cargo about` (or similar) output.
 | alacritty_terminal | The terminal's screen model | Apache-2.0 |
 | ropey | The text buffer | MIT |
 | Velopack | Installers and updates | MIT |
+| Microsoft Visual C++ release runtime | Windows app-local runtime | [Microsoft Visual Studio redistribution terms](https://learn.microsoft.com/visualstudio/releases/2022/redistribution) |

@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 import hashlib
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('forge_package', Path(__file__).parents[1] / 'package.py')
 package = importlib.util.module_from_spec(spec)
@@ -14,6 +15,25 @@ verify_spec.loader.exec_module(verifier)
 
 
 class WebsiteManifestTests(unittest.TestCase):
+    def test_windows_payload_carries_the_release_runtime_beside_the_executable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            redist = root / 'redist'
+            crt = redist / 'x64/Microsoft.VC143.CRT'
+            crt.mkdir(parents=True)
+            (crt / 'vcruntime140.dll').write_bytes(b'VC runtime')
+            (crt / 'msvcp140.dll').write_bytes(b'C++ runtime')
+            payload = root / 'payload'
+            payload.mkdir()
+            with patch.dict(package.os.environ, {'FORGE_VC_REDIST': str(redist)}):
+                package.windows_runtime(payload)
+            self.assertEqual((payload / 'vcruntime140.dll').read_bytes(), b'VC runtime')
+            self.assertEqual((payload / 'msvcp140.dll').read_bytes(), b'C++ runtime')
+            (crt / 'vcruntime140.dll').unlink()
+            with patch.dict(package.os.environ, {'FORGE_VC_REDIST': str(redist)}):
+                with self.assertRaisesRegex(ValueError, 'vcruntime140.dll'):
+                    package.windows_runtime(payload)
+
     def test_checksum_file_must_match_every_download_exactly_once(self):
         with tempfile.TemporaryDirectory() as temp:
             folder = Path(temp)

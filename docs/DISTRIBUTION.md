@@ -41,9 +41,13 @@ package. Linux ARM builds are not currently included.
 
 Windows installs per user, creates a Start menu shortcut and
 registers an uninstaller. Uninstall keeps the user's projects and settings.
-The Velopack setup handles the Visual C++ runtime prerequisite; runtime installation
-may require elevation if it is missing. The optional standalone NSIS build requires
-the runtime to be installed separately. Linux AppImage updates replace the image
+Both Windows package paths include the release Visual C++ runtime beside the
+executable, following [Microsoft's app-local deployment guidance](https://learn.microsoft.com/cpp/windows/choosing-a-deployment-method).
+They do not request a system runtime installation. The packager locates Visual
+Studio's `VC/Redist/MSVC/<version>/x64/Microsoft.VC*.CRT` directory with `vswhere`;
+set `FORGE_VC_REDIST` to the version directory if detection is unavailable. Missing
+release runtime files fail the build. Debug runtime files are never selected.
+Linux AppImage updates replace the image
 when Forge exits; Debian/portable installs use the release download link.
 Linux installs `/usr/bin/forge` and a desktop entry. On Mac, drag Forge.app to
 Applications from the mounted disk image.
@@ -85,9 +89,9 @@ or proof that the latest source has passed the native build jobs.
 The following release gates remain open:
 
 - Windows clean-user installation, portable launch, uninstall preserving user
-  data, and installation on a machine without the Visual C++ runtime. The
-  prerequisite installer may need elevation, so the no-admin requirement still
-  needs resolution/validation on that machine.
+  data, and installation on a machine without the Visual C++ runtime. Packaging
+  now bundles the runtime locally; no-admin installation still needs validation
+  on a clean machine. The earlier downloaded bundle uses the old prerequisite.
 - Linux AppImage launch on X11/Wayland, Debian installation/replacement of
   `ideforfun`, dependency resolution and uninstall preserving user data.
 - Installed upgrade from one test version to the next, including unsaved-file

@@ -1,7 +1,8 @@
 Forge native — development build
 
 Windows: run the setup executable, or extract the portable ZIP and run forge.exe.
-Requires Windows x64 and the Microsoft Visual C++ 2015–2022 x64 runtime.
+Requires Windows x64. The Microsoft Visual C++ runtime is included beside Forge;
+installation does not need a system-wide runtime installer.
 
 Linux: install the Debian package with your package manager, or extract the
 portable archive and run ./forge. Portable builds require the desktop libraries
