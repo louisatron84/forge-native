@@ -20,6 +20,17 @@ Upload its contents together to your website's downloads directory:
 and SHA-256 hashes for website download buttons. `SHA256SUMS` lets users verify
 downloads. Metadata is validated against the actual files when combined.
 
+The Forge website serves its preview installers directly from the separate
+`IDE_website` repository under `public/downloads/1.0.0-dev/`. Its
+`SHA256SUMS.txt` covers the six binaries offered on that page. After deployment,
+check the production links and compare the Windows installer hash with the build
+artifact. The website preview and the in-app GitHub update feed are separate.
+
+On 2026-11-17 both production domains served the Windows x64 setup from build
+`4a01eab` and its SHA-256 matched the original artifact. All six binaries at
+`forgecode.uk` returned HTTP 200 with the expected sizes. Both production domains
+served the matching checksum list. Website deployment commit: `98d5428`.
+
 Build locally with Python 3.11+ and Rust on the matching operating system:
 The workflow pins Rust 1.99.1, matching the verified Windows toolchain.
 
@@ -93,8 +104,26 @@ portable executable hashes, bundled runtime DLL, and absence of the vcredist
 bootstrap dependency. Debian installation checked the binary, desktop entry and
 icon. Both uninstall checks preserved a marker in Forge's user-data directory.
 These checks do not launch the desktop UI or validate an upgrade from another
-version. Later Windows path-identity corrections still need their own native
-build/test run before release.
+version. The path-identity corrections at `4a01eab` passed both Windows and Linux
+[CI jobs](https://github.com/louisatron84/forge-native/actions/runs/44155599679).
+The [packaging run](https://github.com/louisatron84/forge-native/actions/runs/44155600224)
+for that revision passed on Windows x64, Linux x64, Apple Silicon and Intel Mac,
+including the combined artifact's checksum and feed verification.
+
+The installed Windows update fixture can run independently using the workflow's
+`upgrade_only` option and a `package_run_id` containing a verified Windows artifact.
+It builds a console fixture with the optional `forge-update/release-validation`
+feature, packages it as the separate `ForgeUpgradeSmoke` application at 1.0.0 and
+1.0.1, and uses Forge's own download, persisted notes and apply-on-exit methods.
+The controller verifies that files stay at 1.0.0 while the owner is alive, become
+1.0.1 after exit, and preserve user data through update and uninstall. Results
+and logs are private CI artifacts. Normal Windows packaging also runs this check.
+The [first hosted run](https://github.com/louisatron84/forge-native/actions/runs/44161247071)
+passed at `c25e839`. Its report records installed version 1.0.1, saved notes
+for 1.0.1 and unchanged user data after update and uninstall.
+The script refuses personal and self-hosted machines. This fixture does not test
+GPUI restart, unsaved-file prompts or the Welcome screen; those remain desktop
+release gates. It does not publish either test version to the native feed.
 
 The following release gates remain open:
 
@@ -106,7 +135,39 @@ The following release gates remain open:
   `ideforfun`, dependency resolution and uninstall preserving user data.
 - Installed upgrade from one test version to the next, including unsaved-file
   cancellation, apply on close, restart and the one-time What's new notice.
-- Windows/Linux test workflow success for the final source revision, reference
-  desktop performance measurements, and the tester round.
+- Reference desktop performance measurements and the tester round. Release
+  candidates should carry the CI and packaging results for their exact revision.
 - Owner signing/publication and the Electron/website handover described in
   `docs/PLAN.md`. Nothing is published by the build workflow.
+
+## Desktop release acceptance
+
+Use a disposable Windows standard-user profile and Linux desktop sessions on
+X11 and Wayland. Record the build commit, artifact SHA-256, OS, CPU, GPU and
+display refresh rate. Preserve a copy of the original Electron test profile
+and use disposable projects for migration and uninstall checks.
+
+1. Install and launch Forge. Open a project, edit and save a file, and verify
+   that settings, shortcuts, layouts, recent projects and saved templates from
+   the Electron fixture are present after first launch. Relaunch and confirm
+   that native changes survive. Also check the Windows portable build, Linux
+   AppImage and Debian package, including replacement of `ideforfun` on Linux.
+2. On the installed Windows build and Linux AppImage, start on version A with
+   the release candidate feed configured. Make version B available on that test
+   feed. Wait for **Update ready** and confirm that A remains active. With a
+   dirty document, choose to restart and cancel the close prompt. Confirm the
+   document is still dirty and A still runs. Repeat and accept closing. Verify
+   that B starts, shows **What's new** once, and preserves the project and
+   settings. On a separate pass, close normally after the update is ready and
+   verify that the next launch uses B.
+3. Run the parity checks in `docs/PROGRESS.md` against the same project fixtures
+   used for the Electron tester round. Record the steps, expected and actual
+   results, and the build version for each failure.
+4. Measure both native and Electron 0.50.0 on the same reference machines.
+   Capture Forge process memory after idle, startup through the first editable
+   frame, input-to-screen latency and frame times while scrolling the same
+   100k-line file, and layout through the displayed frame for the same 400-node
+   graph. Report the sample count, timing method and raw results alongside the
+   thresholds in `docs/PLAN.md`. The model benchmarks in `docs/BASELINE.md` give
+   CPU timings for comparison. Use displayed-frame observations for the desktop
+   budgets.

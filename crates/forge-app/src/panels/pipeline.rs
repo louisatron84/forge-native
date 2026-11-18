@@ -257,7 +257,7 @@ impl PipelinePanel {
                     .p(t.px(8.))
                     .border_1()
                     .border_color(color)
-                    .rounded(t.px(3.))
+                    .rounded(t.corner(t.px(3.)))
                     .bg(if selected { t.bg_active } else { t.raised })
                     .when(self.selected.is_some() && !selected && !up && !down, |d| d.opacity(0.5))
                     .overflow_hidden()

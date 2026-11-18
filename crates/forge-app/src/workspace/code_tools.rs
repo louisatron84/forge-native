@@ -12,12 +12,12 @@
 use super::Workspace;
 use crate::document::Document;
 use crate::palette::Choice;
-use forge_core::lint::{line_diff, noqa_edit, parse_ruff_json, Edit};
+use forge_core::lint::{noqa_edit, parse_ruff_json, Edit};
 use forge_core::settings::Formatter;
 use forge_core::tabs::same_path;
 use forge_lsp::navigation::LspPos;
 use forge_lsp::server::{CodeAction, Diagnostic};
-use forge_run::tools::{Tool, ToolResult, Tools};
+use forge_run::tools::{Tool, Tools};
 use forge_text::chars::utf16_col;
 use forge_text::Pos;
 use gpui_kit::{Context, Entity, Task, Window};
@@ -48,7 +48,7 @@ fn to_pos(p: forge_core::lint::Pos) -> Pos {
 }
 
 /// A tool's edits as (start, end, text) in character positions.
-fn char_edits(edits: &[Edit]) -> Vec<(Pos, Pos, String)> {
+pub(super) fn char_edits(edits: &[Edit]) -> Vec<(Pos, Pos, String)> {
     edits.iter().map(|e| (to_pos(e.start), to_pos(e.end), e.text.clone())).collect()
 }
 
@@ -101,7 +101,7 @@ impl Workspace {
         self.lint_sync(cx);
     }
 
-    fn lint_soon(&mut self, path: String, delay: Duration, cx: &mut Context<Self>) {
+    pub(super) fn lint_soon(&mut self, path: String, delay: Duration, cx: &mut Context<Self>) {
         let key = path.clone();
         let task = cx.spawn(async move |this, cx| {
             cx.background_executor().timer(delay).await;
@@ -323,13 +323,6 @@ impl Workspace {
 
     // ---------- whole-file tools ----------
 
-    /// Replace the doc's text with a tool's output, changing only the lines that differ.
-    fn replace_text(&mut self, doc: &Entity<Document>, before: &str, after: &str, cx: &mut Context<Self>) -> bool {
-        let Some(edit) = line_diff(before, after) else { return false };
-        self.apply_doc_edits(doc, char_edits(&[edit]), cx);
-        true
-    }
-
     /// Which formatter to use, or None (after offering to install one, unless quiet).
     fn pick_formatter(
         &mut self,
@@ -375,28 +368,22 @@ impl Workspace {
                 (s.line + 1, end + 1)
             })
         });
-        self.format_doc(doc, lines, false, None, window, cx);
+        self.format_doc(doc, lines, None, window, cx);
     }
 
-    /// Format a document; `quiet` is for format-on-save (problems don't
-    /// interrupt saving); `then` runs afterwards whatever happened.
-    pub(crate) fn format_doc(
+    /// Ask before applying a formatter result, including on Save.
+    fn format_doc(
         &mut self,
         doc: Entity<Document>,
         lines: Option<(usize, usize)>,
-        quiet: bool,
-        then: Option<super::pyenv::AfterRun>,
+        save: Option<forge_core::tabs::DocId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let path = doc.read(cx).doc.path().to_owned();
+        let quiet = save.is_some();
         if !is_python(&path) {
-            if !quiet {
-                self.status_note("Formatting is for Python files.", cx);
-            }
-            if let Some(then) = then {
-                then(self, None, window, cx);
-            }
+            self.status_note("Formatting is for Python files.", cx);
             return;
         }
         let (before, version) = {
@@ -421,11 +408,24 @@ impl Workspace {
                 None => None,
             };
             this.update_in(cx, |ws, window, cx| {
-                if let Some(res) = res {
-                    ws.formatted(&doc, &before, version, res, quiet, window, cx);
+                match res {
+                    Some(res) if res.ok && res.output != before => {
+                        ws.review_tool_edit(doc, version, (before, res.output), "Format", quiet, cx);
+                        return;
+                    }
+                    Some(res) if !res.ok => {
+                        let error = res.error.unwrap_or_else(|| "Formatting failed.".into());
+                        if quiet {
+                            ws.status_note(format!("Could not format: {}", error.lines().next().unwrap_or("")), cx);
+                        } else {
+                            ws.alert(error, window, cx);
+                        }
+                    }
+                    Some(_) if !quiet => ws.status_note("Already formatted.", cx),
+                    _ => {}
                 }
-                if let Some(then) = then {
-                    then(ws, None, window, cx);
+                if let Some(id) = save.filter(|id| ws.docs.get(id) == Some(&doc)) {
+                    ws.save(Some(id), window, cx);
                 }
             })
             .ok();
@@ -433,44 +433,12 @@ impl Workspace {
         .detach();
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn formatted(
-        &mut self,
-        doc: &Entity<Document>,
-        before: &str,
-        version: u64,
-        res: ToolResult,
-        quiet: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !res.ok {
-            let error = res.error.unwrap_or_else(|| "Formatting failed.".into());
-            if quiet {
-                self.status_note(format!("Not formatted: {}", error.lines().next().unwrap_or("")), cx);
-            } else {
-                self.alert(error, window, cx);
-            }
-            return;
-        }
-        // Edited while formatting: don't overwrite.
-        if doc.read(cx).doc.version != version {
-            return;
-        }
-        if !self.replace_text(doc, before, &res.output, cx) && !quiet {
-            self.status_note("Already formatted.", cx);
-        }
-    }
-
     /// Ctrl+S: format first when the settings say so, then save.
     pub(crate) fn save_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(doc) = self.active_doc() else { return };
         let id = self.tabs.active();
         if self.effective_settings(cx).format_on_save && is_python(doc.read(cx).doc.path()) {
-            let then: super::pyenv::AfterRun = Box::new(move |ws, _, window, cx| {
-                ws.save(id, window, cx);
-            });
-            return self.format_doc(doc, None, true, Some(then), window, cx);
+            return self.format_doc(doc, None, id, window, cx);
         }
         self.save(id, window, cx);
     }
@@ -498,8 +466,10 @@ impl Workspace {
                 .await;
             if res.ok {
                 this.update(cx, |ws, cx| {
-                    if doc.read(cx).doc.version == version && !ws.replace_text(&doc, &before, &res.output, cx) {
+                    if before == res.output {
                         ws.status_note("Imports are already organized.", cx);
+                    } else {
+                        ws.review_tool_edit(doc, version, (before, res.output), "Organize Imports", false, cx);
                     }
                 })
                 .ok();
@@ -510,7 +480,17 @@ impl Workspace {
                 let actions =
                     s.code_actions(&path, LspPos::new(0, 0), end16, &[], Some(&["source.organizeImports"])).await;
                 if let Some(a) = actions.into_iter().next() {
-                    this.update_in(cx, |ws, window, cx| ws.run_code_action(a, window, cx)).ok();
+                    this.update_in(cx, |ws, window, cx| {
+                        if doc.read(cx).doc.version != version {
+                            return ws.status_note("The editor changed. Organize imports again.", cx);
+                        }
+                        if let Some(edits) = a.edit.as_ref().filter(|edits| !edits.is_empty()) {
+                            ws.review_language_edits(edits, "Organize Imports", None, window, cx);
+                        } else {
+                            ws.run_code_action(a, window, cx);
+                        }
+                    })
+                    .ok();
                     return;
                 }
             }
@@ -562,13 +542,11 @@ impl Workspace {
                         ws.alert(res.error.unwrap_or_else(|| "Ruff failed.".into()), window, cx)
                     };
                 }
-                if doc.read(cx).doc.version != version {
-                    return;
-                }
-                if !ws.replace_text(&doc, &before, &res.output, cx) {
+                if before == res.output {
                     ws.status_note("Nothing to fix automatically.", cx);
+                } else {
+                    ws.review_tool_edit(doc, version, (before, res.output), "Fix All", false, cx);
                 }
-                ws.lint_soon(path.clone(), Duration::from_millis(100), cx);
             })
             .ok();
         })

@@ -161,6 +161,13 @@ impl Updater {
         Ok(())
     }
 
+    /// The isolated installed-update fixture supplies a local feed instead of
+    /// the public release host. This adapter is excluded from normal app builds.
+    #[cfg(feature = "release-validation")]
+    pub fn check_for_validation(&self, manager: UpdateManager) -> Result<(), String> {
+        self.check_managed(manager, true)
+    }
+
     /// Arm the installer only after every window has accepted closing; it waits
     /// for this process to exit, with no work scheduled while the user is coding.
     pub fn install_on_exit(&self, restart: bool) -> Result<(), String> {
@@ -174,8 +181,11 @@ impl Updater {
     }
     pub fn save_notes(&self, release: &Release) -> Result<(), String> {
         std::fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
-        std::fs::write(self.dir.join("update-notes.json"), serde_json::to_vec(release).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())
+        forge_sys::file_write::replace(
+            &self.dir.join("update-notes.json"),
+            serde_json::to_vec(release).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())
     }
     pub fn notes(&self) -> Option<Release> {
         serde_json::from_slice(&std::fs::read(self.dir.join("update-notes.json")).ok()?).ok()
@@ -184,7 +194,7 @@ impl Updater {
         let path = self.dir.join("last-run-version.txt");
         let previous = std::fs::read_to_string(&path).ok();
         let _ = std::fs::create_dir_all(&self.dir);
-        let _ = std::fs::write(path, CURRENT);
+        let _ = forge_sys::file_write::replace(&path, CURRENT);
         if previous.as_deref().is_some_and(|v| is_newer(v.trim(), CURRENT)) {
             self.notes().filter(|r| r.version == CURRENT)
         } else {

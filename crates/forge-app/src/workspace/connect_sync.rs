@@ -1,6 +1,9 @@
 //! Debounced generated-block and full CSV synchronisation, replacing
 //! `boxes/controller.ts::syncCode/saveCsv`. All CSV construction runs on a worker.
-use super::Workspace;
+use super::{
+    generated::{ChangeReview, TextChange},
+    Workspace,
+};
 use forge_core::{
     api_fields::csv_from_sample,
     box_code::{block_hash, generate_block},
@@ -11,7 +14,7 @@ use gpui_kit::{Context, Task, Window};
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
-    path::{Path, PathBuf},
+    path::Path,
     sync::Arc,
     time::Duration,
 };
@@ -32,46 +35,34 @@ struct Snapshot {
     csv: Vec<CsvInput>,
 }
 struct Change {
-    path: PathBuf,
     relative: String,
-    original: String,
-    disk: Option<String>,
-    updated: String,
+    text: TextChange,
     kind: ChangeKind,
 }
 enum ChangeKind {
     Code { id: String, hash: String },
     Csv { box_id: String, id: String, stamp: u64, count: usize },
 }
-fn read(path: &Path) -> Result<Option<String>, String> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    match forge_sys::text_file::read_text_file(path, false, None).map_err(|e| e.to_string())? {
-        forge_sys::text_file::TextFile::Text { text, .. } => Ok(Some(text)),
-        _ => Err("The target isn't a normal text file.".into()),
-    }
-}
 fn change(
     root: &Path,
     relative: &str,
     updated: String,
     kind: ChangeKind,
-    open: &HashMap<String, String>,
+    open: &HashMap<String, (String, bool)>,
 ) -> Result<Change, String> {
     let path = forge_sys::connect::project_path(root, relative).map_err(|e| e.to_string())?;
-    let disk = read(&path)?;
     let original = open
         .iter()
         .find(|(p, _)| forge_core::tabs::same_path(p, &path.to_string_lossy()))
-        .map(|(_, text)| text.clone())
-        .unwrap_or_else(|| disk.clone().unwrap_or_default());
-    Ok(Change { path, relative: relative.into(), original, disk, updated, kind })
+        .map(|(_, text)| text.clone());
+    let mut text = TextChange::read(path, original)?;
+    text.updated = updated;
+    Ok(Change { relative: relative.into(), text, kind })
 }
 fn prepare(
     root: &Path,
     snapshots: Vec<Snapshot>,
-    open: HashMap<String, String>,
+    open: HashMap<String, (String, bool)>,
     saved: HashMap<(String, String), (String, u64)>,
 ) -> (Vec<Change>, Vec<String>) {
     let mut changes = Vec::new();
@@ -91,10 +82,10 @@ fn prepare(
                     &open,
                 ) {
                     Ok(mut next) => {
-                        if next.disk.is_some() && block_state(&next.original, &api) == BlockState::Ok {
-                            match replace_block(&next.original, &api.id, &generated) {
+                        if next.text.disk.is_some() && block_state(&next.text.original, &api) == BlockState::Ok {
+                            match replace_block(&next.text.original, &api.id, &generated) {
                                 Ok(updated) => {
-                                    next.updated = updated;
+                                    next.text.updated = updated;
                                     changes.push(next)
                                 }
                                 Err(e) => notes.push(e),
@@ -189,35 +180,65 @@ impl Workspace {
                 wanted
                     .iter()
                     .any(|p| forge_core::tabs::same_path(p, d.doc.path()))
-                    .then(|| (d.doc.path().to_owned(), d.doc.text()))
+                    .then(|| (d.doc.path().to_owned(), (d.doc.text(), d.doc.dirty())))
             })
             .collect();
         let saved = self.connect_state.sync.saved.clone();
         let worker_root = root.clone();
         self.connect_state.sync.task = Some(cx.spawn_in(window, async move |this, cx| {
-            let (changes, mut notes) =
+            let (changes, notes) =
                 cx.background_executor().spawn(async move { prepare(&worker_root, snapshots, open, saved) }).await;
-            this.update_in(cx, |ws, window, cx| {
+            this.update(cx, |ws, cx| {
                 if ws.root.as_ref() != Some(&root)
                     || ws.connect_state.generation != generation
                     || ws.connect_state.revision != revision
                 {
                     return;
                 }
-                let mut code = false;
                 for change in changes {
-                    match ws.apply_connect_change(&root, change, window, cx) {
-                        Ok((note, is_code)) => {
-                            notes.push(note);
-                            code |= is_code
-                        }
-                        Err(e) => notes.push(e),
-                    }
-                }
-                if code {
-                    ws.save_boxes(cx);
-                    ws.rebuild_graph(cx);
-                    ws.queue_graph_scan(None, cx)
+                    let root = root.clone();
+                    let label = change.text.label(ws, cx);
+                    let (before, after) = change.text.diff();
+                    let source = match change.kind {
+                        ChangeKind::Code { .. } => "Connect generated code",
+                        ChangeKind::Csv { .. } => "Connect Test call CSV",
+                    };
+                    ws.review_change(
+                        ChangeReview::new(
+                            format!("{source}: {}", change.relative),
+                            before,
+                            after,
+                            label,
+                            "Reject",
+                            move |apply, ws, window, cx| {
+                                if !apply {
+                                    return;
+                                }
+                                if ws.root.as_ref() != Some(&root)
+                                    || ws.connect_state.generation != generation
+                                    || ws.connect_state.revision != revision
+                                {
+                                    return ws.status_note("The API settings changed. Run the request again.", cx);
+                                }
+                                match ws.apply_connect_change(&root, change, window, cx) {
+                                    Ok((note, code)) => {
+                                        if code {
+                                            ws.save_boxes(cx);
+                                            ws.rebuild_graph(cx);
+                                            ws.queue_graph_scan(None, cx);
+                                        }
+                                        ws.connect.update(cx, |p, cx| {
+                                            p.status = note;
+                                            cx.notify();
+                                        });
+                                        ws.file_tree.update(cx, |t, cx| t.refresh_all(cx));
+                                    }
+                                    Err(error) => ws.alert(error, window, cx),
+                                }
+                            },
+                        ),
+                        cx,
+                    );
                 }
                 if !notes.is_empty() {
                     ws.connect.update(cx, |p, cx| {
@@ -237,45 +258,16 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(String, bool), String> {
-        if forge_sys::connect::project_path(root, &change.relative).map_err(|e| e.to_string())? != change.path
-            || read(&change.path)? != change.disk
-        {
-            return Err(format!("{} changed while synchronising; preview again before replacing it.", change.relative));
+        let text = change.text;
+        if forge_sys::connect::project_path(root, &change.relative).map_err(|e| e.to_string())? != text.path {
+            return Err(format!("{} moved. Preview the change again.", change.relative));
         }
-        let existing = self.find_doc(&change.path.to_string_lossy(), cx);
-        let current = existing
-            .and_then(|id| self.docs.get(&id))
-            .map(|d| d.read(cx).doc.text())
-            .unwrap_or_else(|| change.disk.clone().unwrap_or_default());
-        if current != change.original {
-            return Err(format!("{} has newer edits; preview again before replacing them.", change.relative));
-        }
-        if !change.path.exists() {
-            forge_sys::files::create_entry(root, &change.relative, false).map_err(|e| e.to_string())?;
-        }
-        let id = if let Some(id) = existing {
-            id
-        } else {
-            self.load_doc(&change.path, false, cx)?.ok_or("Couldn't open the sync target.")?
+        let dirty = self.find_doc(&text.path.to_string_lossy(), cx).is_some_and(|id| self.is_dirty(id, cx));
+        let source = match change.kind {
+            ChangeKind::Code { .. } => "Connect generated code",
+            ChangeKind::Csv { .. } => "Connect Test call CSV",
         };
-        let doc = self.docs[&id].clone();
-        let dirty = doc.read(cx).doc.dirty();
-        let is_csv = matches!(change.kind, ChangeKind::Csv { .. });
-        doc.update(cx, |d, cx| {
-            d.edit(None, cx, |doc| {
-                if is_csv {
-                    doc.set_eol(forge_text::Eol::CrLf)
-                }
-                let forge_text::Doc { buffer, history, .. } = doc;
-                history.transact(buffer, forge_text::EditKind::Other, forge_text::Pos::new(0, 0), |b| {
-                    b.set_text(&change.updated);
-                    forge_text::Pos::new(0, 0)
-                });
-            })
-        });
-        if !dirty && !self.save(Some(id), window, cx) {
-            return Err(format!("Couldn't save {}.", change.relative));
-        }
+        self.apply_reviewed_text(text, source, window, cx)?;
         let suffix = if dirty { " (unsaved: the file already had other edits)" } else { "" };
         match change.kind {
             ChangeKind::Code { id, hash } => {

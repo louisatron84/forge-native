@@ -2,14 +2,23 @@
 use forge_core::templates::*;
 use std::{
     collections::BTreeSet,
-    fs,
-    io::{self, Write},
+    fs, io,
     path::{Path, PathBuf},
 };
 fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message.into())
 }
 pub fn create_project(parent: &Path, name: &str, files: &[TemplateFile]) -> io::Result<PathBuf> {
+    let target = project_target(parent, name, files)?;
+    fs::create_dir(&target)?;
+    for f in files {
+        let path = target.join(f.path.replace('\\', "/"));
+        crate::file_write::create(&path, &f.content)?;
+    }
+    Ok(target)
+}
+
+pub fn project_target(parent: &Path, name: &str, files: &[TemplateFile]) -> io::Result<PathBuf> {
     if let Some(e) = project_name_problem(name) {
         return Err(invalid(e));
     }
@@ -20,14 +29,8 @@ pub fn create_project(parent: &Path, name: &str, files: &[TemplateFile]) -> io::
         }
     }
     let target = parent.join(name.trim());
-    if target.exists() {
+    if fs::symlink_metadata(&target).is_ok() {
         return Err(invalid("A folder with that name already exists."));
-    }
-    fs::create_dir(&target)?;
-    for f in files {
-        let path = target.join(f.path.replace('\\', "/"));
-        fs::create_dir_all(path.parent().unwrap())?;
-        fs::OpenOptions::new().create_new(true).write(true).open(path)?.write_all(f.content.as_bytes())?;
     }
     Ok(target)
 }
@@ -75,6 +78,9 @@ fn text_files(root: &Path) -> io::Result<Vec<TemplateFile>> {
                 continue;
             }
             let path = e.path();
+            if crate::file_write::is_secret_file(&path) {
+                continue;
+            }
             if kind.is_dir() {
                 if !path.join("pyvenv.cfg").exists() {
                     folders.push(path);
@@ -121,6 +127,21 @@ fn swap_module(text: &str, module: &str) -> String {
     out
 }
 pub fn save_template(root: &Path, store: &Path, name: &str, detail: &str) -> io::Result<String> {
+    let (dir, files) = plan_save_template(root, store, name, detail)?;
+    fs::create_dir_all(store)?;
+    fs::create_dir(&dir)?;
+    for f in files {
+        crate::file_write::create(&dir.join(f.path), &f.content)?;
+    }
+    Ok(dir.file_name().unwrap_or_default().to_string_lossy().into_owned())
+}
+
+pub fn plan_save_template(
+    root: &Path,
+    store: &Path,
+    name: &str,
+    detail: &str,
+) -> io::Result<(PathBuf, Vec<TemplateFile>)> {
     if name.trim().is_empty() {
         return Err(invalid("Type a name for the template."));
     }
@@ -131,36 +152,29 @@ pub fn save_template(root: &Path, store: &Path, name: &str, detail: &str) -> io:
             if project != module && project.len() >= 3 { s.replace(project.as_ref(), "{{name}}") } else { s.into() };
         swap_module(&t, &module)
     };
-    let files = text_files(root)?
+    let mut files = text_files(root)?
         .into_iter()
-        .map(|f| TemplateFile { path: swap(&f.path), content: swap(&f.content) })
+        .map(|f| TemplateFile { path: format!("files/{}", swap(&f.path)), content: swap(&f.content) })
         .collect::<Vec<_>>();
     if files.is_empty() {
         return Err(invalid("The project has no text files to save."));
     }
     let base = module_name(name);
-    fs::create_dir_all(store)?;
     let mut id = base.clone();
     let mut n = 2;
-    while store.join(&id).exists() {
+    while fs::symlink_metadata(store.join(&id)).is_ok() {
         id = format!("{base}_{n}");
         n += 1;
     }
-    let dir = store.join(&id);
-    fs::create_dir(&dir)?;
     for f in &files {
         if !safe_template_path(&f.path) {
             return Err(invalid("A template filename isn't safe."));
         }
-        let path = dir.join("files").join(&f.path);
-        fs::create_dir_all(path.parent().unwrap())?;
-        fs::write(path, &f.content)?;
     }
-    crate::user_state::write_json(
-        &dir.join("template.json"),
-        &serde_json::json!({"name":name.trim(),"detail":detail}),
-    )?;
-    Ok(id)
+    let metadata = serde_json::to_string_pretty(&serde_json::json!({"name":name.trim(),"detail":detail}))
+        .map_err(io::Error::other)?;
+    files.push(TemplateFile { path: "template.json".into(), content: format!("{metadata}\n") });
+    Ok((store.join(id), files))
 }
 pub fn list_user_templates(store: &Path) -> Vec<ProjectTemplate> {
     let mut out = Vec::new();

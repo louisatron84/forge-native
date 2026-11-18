@@ -3,12 +3,13 @@
 pub mod breakpoints;
 
 use forge_lsp::jsonrpc::{encode_message, MessageReader};
+use forge_sys::process::ManagedChild;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{IpAddr, TcpStream};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::{
     atomic::{AtomicI64, Ordering},
     mpsc, Arc, Mutex,
@@ -109,7 +110,7 @@ impl Client {
 /// A parent adapter process or a connection to a child debug session.
 pub struct Adapter {
     pub client: Arc<Client>,
-    child: Option<Child>,
+    child: Option<Arc<Mutex<ManagedChild>>>,
     socket: Option<TcpStream>,
 }
 
@@ -122,20 +123,40 @@ impl Adapter {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x0800_0000);
-        }
-        let mut child = command.spawn().map_err(|e| format!("Cannot start debugpy: {e}"))?;
-        let stdin = child.stdin.take().ok_or("No adapter stdin")?;
-        let stdout = child.stdout.take().ok_or("No adapter stdout")?;
-        if let Some(mut stderr) = child.stderr.take() {
+        let mut child = ManagedChild::spawn(&mut command, Duration::from_secs(24 * 60 * 60))
+            .map_err(|e| format!("Cannot start debugpy: {e}"))?;
+        let stdin = child.take_stdin().ok_or("No adapter stdin")?;
+        let stdout = child.take_stdout().ok_or("No adapter stdout")?;
+        if let Some(mut stderr) = child.take_stderr() {
             std::thread::spawn(move || {
                 let _ = std::io::copy(&mut stderr, &mut std::io::sink());
             });
         }
         let client = transport(stdout, stdin, Arc::new(event));
+        let child = Arc::new(Mutex::new(child));
+        let watched = Arc::downgrade(&child);
+        let requests = client.clone();
+        std::thread::spawn(move || loop {
+            let Some(child) = watched.upgrade() else { break };
+            let result = child
+                .lock()
+                .map_err(|_| std::io::Error::other("Debug adapter process lock failed"))
+                .and_then(|mut child| child.try_wait());
+            match result {
+                Ok(None) => {
+                    drop(child);
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(error) => {
+                    requests.closed(&format!("Debug adapter stopped: {error}"));
+                    if let Ok(mut child) = child.lock() {
+                        let _ = child.stop();
+                    }
+                    break;
+                }
+                _ => break,
+            }
+        });
         Ok(Self { client, child: Some(child), socket: None })
     }
 
@@ -162,9 +183,10 @@ impl Drop for Adapter {
         if let Some(socket) = &self.socket {
             let _ = socket.shutdown(std::net::Shutdown::Both);
         }
-        if let Some(child) = &mut self.child {
-            let _ = child.kill();
-            let _ = child.wait();
+        if let Some(child) = &self.child {
+            if let Ok(mut child) = child.lock() {
+                let _ = child.stop();
+            }
         }
     }
 }

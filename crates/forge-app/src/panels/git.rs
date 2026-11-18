@@ -191,7 +191,7 @@ impl GitPanel {
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(t.fg_muted)
             .child(title.to_uppercase())
-            .child(div().px(t.px(5.0)).rounded(t.px(6.0)).bg(t.shade_strong).child(list.len().to_string()));
+            .child(div().px(t.px(5.0)).rounded(t.corner(t.px(6.0))).bg(t.shade_strong).child(list.len().to_string()));
         if !list.is_empty() {
             let mut buttons = div().ml_auto().flex().gap(t.px(2.0));
             for (i, (label, tip, event)) in actions.into_iter().enumerate() {
@@ -316,7 +316,7 @@ fn button(id: impl Into<SharedString>, label: impl Into<SharedString>, t: &Theme
         .py(t.px(2.0))
         .border_1()
         .border_color(t.border)
-        .rounded(t.px(2.0))
+        .rounded(t.corner(t.px(2.0)))
         .text_size(t.px(12.0))
         .cursor_pointer()
         .hover(|s| s.bg(t.bg_hover))
@@ -333,7 +333,7 @@ fn mini_button(
     div()
         .id(id)
         .px(t.px(4.0))
-        .rounded(t.px(2.0))
+        .rounded(t.corner(t.px(2.0)))
         .text_size(t.px(12.0))
         .text_color(t.fg_muted)
         .cursor_pointer()
@@ -393,7 +393,7 @@ impl Render for GitPanel {
                     .whitespace_nowrap()
                     .px(t.px(6.0))
                     .py(t.px(2.0))
-                    .rounded(t.px(2.0))
+                    .rounded(t.corner(t.px(2.0)))
                     .font_weight(FontWeight::MEDIUM)
                     .cursor_pointer()
                     .hover(|s| s.bg(t.bg_hover))
@@ -429,7 +429,7 @@ impl Render for GitPanel {
                     .h(t.px(64.0))
                     .border_1()
                     .border_color(t.border)
-                    .rounded(t.px(2.0))
+                    .rounded(t.corner(t.px(2.0)))
                     .bg(t.bg)
                     .child(Textarea::new(&self.message).appearance(false).h_full()),
             )

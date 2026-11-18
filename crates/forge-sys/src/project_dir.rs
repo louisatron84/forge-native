@@ -1,158 +1,51 @@
-//! Forge keeps a project's own files (settings.json, run.json...) in
-//! `<project>/.forge`. Projects from before the rename have
-//! `<project>/.ideforfun`: that folder is renamed the first time the project
-//! is opened, or copied when it can't be renamed (on Windows a file inside it
-//! may be locked). Replaces `src/main/projectDir.ts`.
+//! Review migration from the legacy project settings directory to .forge.
 
+use crate::user_state::{plan_legacy_files, LegacyFile};
 use forge_core::settings::{LEGACY_PROJECT_DIR, PROJECT_DIR};
-use std::io;
-use std::path::Path;
+use std::{
+    io,
+    path::{Path, PathBuf},
+};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProjectDirResult {
-    None,
-    Migrated,
-    Copied,
-    /// Both exist: .forge is used, .ideforfun left alone.
-    Both,
-    /// Neither moving nor copying worked; nothing was changed.
-    Error,
-}
-
-/// The file-system operations used (replaceable in tests).
-pub struct FsOps<'a> {
-    pub rename: &'a dyn Fn(&Path, &Path) -> io::Result<()>,
-    pub copy_dir: &'a dyn Fn(&Path, &Path) -> io::Result<()>,
-}
-
-pub fn copy_dir_all(from: &Path, to: &Path) -> io::Result<()> {
-    std::fs::create_dir_all(to)?;
-    for e in std::fs::read_dir(from)? {
-        let e = e?;
-        let target = to.join(e.file_name());
-        if e.file_type()?.is_dir() {
-            copy_dir_all(&e.path(), &target)?;
-        } else {
-            std::fs::copy(e.path(), target)?;
-        }
-    }
-    Ok(())
-}
-
-fn real_rename(from: &Path, to: &Path) -> io::Result<()> {
-    std::fs::rename(from, to)
-}
-
-pub fn prepare_project_dir(root: &Path) -> ProjectDirResult {
-    prepare_project_dir_with(root, &FsOps { rename: &real_rename, copy_dir: &copy_dir_all })
-}
-
-pub fn prepare_project_dir_with(root: &Path, ops: &FsOps<'_>) -> ProjectDirResult {
-    let current = root.join(PROJECT_DIR);
+pub fn plan_legacy_project_import(root: &Path) -> io::Result<Option<Vec<LegacyFile>>> {
     let legacy = root.join(LEGACY_PROJECT_DIR);
-    let has_legacy = legacy.is_dir();
-    if current.is_dir() {
-        return if has_legacy { ProjectDirResult::Both } else { ProjectDirResult::None };
+    let native = root.join(PROJECT_DIR);
+    if native.try_exists()? || !legacy.is_dir() {
+        return Ok(None);
     }
-    if !has_legacy {
-        return ProjectDirResult::None;
+    if !std::fs::canonicalize(&legacy)?.starts_with(std::fs::canonicalize(root)?) {
+        return Err(io::Error::other("Legacy settings point outside the project."));
     }
-    if (ops.rename)(&legacy, &current).is_ok() {
-        return ProjectDirResult::Migrated;
-    }
-    // Copy into a temporary folder and only then give it the real name, so a copy that
-    // fails partway never leaves a half-filled .forge that would win from then on.
-    let Ok(temp) = tempfile::Builder::new().prefix(".forge-copying-").tempdir_in(root) else {
-        return ProjectDirResult::Error;
-    };
-    match (ops.copy_dir)(&legacy, temp.path()).and_then(|_| std::fs::rename(temp.path(), &current)) {
-        Ok(()) => ProjectDirResult::Copied,
-        Err(_) => ProjectDirResult::Error,
-    }
+    let files = std::fs::read_dir(&legacy)?
+        .map(|entry| entry.map(|entry| PathBuf::from(entry.file_name())))
+        .collect::<io::Result<_>>()?;
+    Ok(Some(plan_legacy_files(&legacy, &native, files)?))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
-    fn failed_migration_does_not_delete_a_preexisting_staging_folder() {
+    fn legacy_project_files_are_planned_without_writing_to_either_directory() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join(".ideforfun")).unwrap();
-        let existing = dir.path().join(format!(".forge-copying-{}", std::process::id()));
-        std::fs::create_dir(&existing).unwrap();
-        std::fs::write(existing.join("keep.txt"), "user data").unwrap();
-        let fail = |_: &Path, _: &Path| Err(io::Error::other("simulated failure"));
-        assert_eq!(
-            prepare_project_dir_with(dir.path(), &FsOps { rename: &fail, copy_dir: &fail }),
-            ProjectDirResult::Error
-        );
-        assert_eq!(std::fs::read_to_string(existing.join("keep.txt")).unwrap(), "user data");
-    }
-
-    fn put(root: &Path, rel: &str, text: &str) {
-        let p = root.join(rel);
-        std::fs::create_dir_all(p.parent().expect("parent")).expect("mkdir");
-        std::fs::write(p, text).expect("write");
+        let legacy = dir.path().join(LEGACY_PROJECT_DIR);
+        fs::create_dir_all(legacy.join("nested")).unwrap();
+        fs::write(legacy.join("nested/run.json"), "{}").unwrap();
+        let plan = plan_legacy_project_import(dir.path()).unwrap().unwrap();
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].relative, "nested/run.json");
+        assert_eq!(plan[0].contents, b"{}");
+        assert!(!dir.path().join(PROJECT_DIR).exists());
+        assert!(legacy.join("nested/run.json").exists());
     }
 
     #[test]
-    fn renames_a_legacy_ideforfun_folder_to_forge() {
-        let dir = tempfile::tempdir().expect("temp");
-        put(dir.path(), ".ideforfun/settings.json", "{\"tabSize\":2}");
-        assert_eq!(prepare_project_dir(dir.path()), ProjectDirResult::Migrated);
-        assert!(dir.path().join(".forge/settings.json").exists());
-        assert!(!dir.path().join(".ideforfun").exists());
-    }
-
-    #[test]
-    fn nothing_to_do_without_a_legacy_folder_and_forge_isnt_created_eagerly() {
-        let dir = tempfile::tempdir().expect("temp");
-        assert_eq!(prepare_project_dir(dir.path()), ProjectDirResult::None);
-        assert!(!dir.path().join(".forge").exists());
-        put(dir.path(), ".forge/settings.json", "{}");
-        assert_eq!(prepare_project_dir(dir.path()), ProjectDirResult::None);
-    }
-
-    #[test]
-    fn uses_forge_and_leaves_ideforfun_alone_when_both_exist() {
-        let dir = tempfile::tempdir().expect("temp");
-        put(dir.path(), ".forge/settings.json", "{\"tabSize\":2}");
-        put(dir.path(), ".ideforfun/settings.json", "{\"tabSize\":8}");
-        assert_eq!(prepare_project_dir(dir.path()), ProjectDirResult::Both);
-        assert_eq!(std::fs::read_to_string(dir.path().join(".forge/settings.json")).expect("read"), "{\"tabSize\":2}");
-        assert!(dir.path().join(".ideforfun/settings.json").exists());
-    }
-
-    #[test]
-    fn copies_when_the_rename_fails_and_keeps_the_original() {
-        let dir = tempfile::tempdir().expect("temp");
-        put(dir.path(), ".ideforfun/run.json", "{\"configurations\":[]}");
-        let fail = |_: &Path, _: &Path| -> io::Result<()> { Err(io::Error::other("busy")) };
-        let res = prepare_project_dir_with(dir.path(), &FsOps { rename: &fail, copy_dir: &copy_dir_all });
-        assert_eq!(res, ProjectDirResult::Copied);
-        assert!(dir.path().join(".forge/run.json").exists());
-        assert!(dir.path().join(".ideforfun/run.json").exists());
-    }
-
-    #[test]
-    fn reports_an_error_and_leaves_no_half_copied_forge_when_the_copy_fails_too() {
-        let dir = tempfile::tempdir().expect("temp");
-        put(dir.path(), ".ideforfun/settings.json", "{}");
-        put(dir.path(), ".ideforfun/run.json", "{}");
-        let fail = |_: &Path, _: &Path| -> io::Result<()> { Err(io::Error::other("busy")) };
-        let partial = |_: &Path, to: &Path| -> io::Result<()> {
-            std::fs::create_dir_all(to)?;
-            std::fs::write(to.join("settings.json"), "{}")?; // got partway
-            Err(io::Error::other("busy"))
-        };
-        let res = prepare_project_dir_with(dir.path(), &FsOps { rename: &fail, copy_dir: &partial });
-        assert_eq!(res, ProjectDirResult::Error);
-        assert!(!dir.path().join(".forge").exists());
-        let names: Vec<String> = std::fs::read_dir(dir.path())
-            .expect("dir")
-            .map(|e| e.expect("e").file_name().to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(names, [".ideforfun"]);
+    fn project_import_keeps_existing_native_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join(LEGACY_PROJECT_DIR)).unwrap();
+        fs::create_dir(dir.path().join(PROJECT_DIR)).unwrap();
+        assert!(plan_legacy_project_import(dir.path()).unwrap().is_none());
     }
 }

@@ -5,15 +5,17 @@
 use crate::env::process_env;
 use crate::python::{is_bare_command, python_candidates};
 use forge_core::output::{skipped_note, OutputQueue, Stream};
+use forge_sys::process::ManagedChild;
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Output is sent in batches this often...
+const RUN_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 const BATCH: Duration = Duration::from_millis(40);
 /// ...and at most this much is kept waiting (older output is skipped beyond that).
 const MAX_WAITING_CHARS: usize = 1_000_000;
@@ -48,7 +50,7 @@ pub enum RunEvent {
 
 /// A running program.
 pub struct PythonRun {
-    child: Arc<Mutex<Option<Child>>>,
+    child: Arc<Mutex<Option<ManagedChild>>>,
     stdin: Arc<Mutex<Option<ChildStdin>>>,
     _trace: Option<crate::trace::TraceServer>,
 }
@@ -104,8 +106,7 @@ impl PythonRun {
             }
             cmd.current_dir(&spec.cwd).env_clear().envs(&env);
             cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-            hide_window(&mut cmd);
-            match cmd.spawn() {
+            match ManagedChild::spawn(&mut cmd, RUN_TIMEOUT) {
                 Ok(child) => return Some(Self::watch(child, python, file, send, trace)),
                 Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
                 Err(e) => {
@@ -126,7 +127,7 @@ impl PythonRun {
     }
 
     fn watch(
-        mut child: Child,
+        mut child: ManagedChild,
         python: String,
         file: String,
         send: Arc<dyn Fn(RunEvent) + Send + Sync>,
@@ -169,9 +170,9 @@ impl PythonRun {
                 open.fetch_sub(1, Ordering::SeqCst);
             });
         };
-        reader(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>), Stream::Stdout);
-        reader(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>), Stream::Stderr);
-        let stdin = Arc::new(Mutex::new(child.stdin.take()));
+        reader(child.take_stdout().map(|p| Box::new(p) as Box<dyn Read + Send>), Stream::Stdout);
+        reader(child.take_stderr().map(|p| Box::new(p) as Box<dyn Read + Send>), Stream::Stderr);
+        let stdin = Arc::new(Mutex::new(child.take_stdin()));
         let child = Arc::new(Mutex::new(Some(child)));
         let flush = {
             let queue = queue.clone();
@@ -194,10 +195,17 @@ impl PythonRun {
                     std::thread::sleep(BATCH);
                     flush();
                     let status = match child.lock() {
-                        Ok(mut c) => match c.as_mut().map(Child::try_wait) {
+                        Ok(mut c) => match c.as_mut().map(ManagedChild::try_wait) {
                             Some(Ok(Some(status))) => Some(status.code()),
                             Some(Ok(None)) => None,
-                            Some(Err(_)) | None => Some(None),
+                            Some(Err(error)) => {
+                                if error.kind() == io::ErrorKind::TimedOut {
+                                    send(RunEvent::Error("Python reached its 24-hour run limit.".into()));
+                                }
+                                c.take();
+                                Some(None)
+                            }
+                            None => Some(None),
                         },
                         Err(_) => Some(None),
                     };
@@ -233,7 +241,7 @@ impl PythonRun {
     pub fn stop(&self) {
         if let Ok(mut c) = self.child.lock() {
             if let Some(child) = c.as_mut() {
-                let _ = child.kill();
+                let _ = child.stop();
             }
         }
     }

@@ -11,7 +11,7 @@ use gpui_kit::{
 
 #[derive(Clone)]
 pub enum InspectEvent {
-    Action(&'static str),
+    ApplyReviewed,
     Close,
     Patch { patch: String, cached: bool, reverse: bool },
     Commit(String),
@@ -29,7 +29,8 @@ struct Row {
 
 #[derive(Default)]
 pub struct GitInspect {
-    pub action: Option<(&'static str, &'static str)>,
+    pub action: Option<&'static str>,
+    reject_label: Option<&'static str>,
     graph_columns: usize,
     pub open: bool,
     pub title: String,
@@ -45,12 +46,65 @@ impl GitInspect {
     }
     pub fn text(&mut self, title: String, lines: Vec<String>, cx: &mut Context<Self>) {
         self.action = None;
+        self.reject_label = None;
         self.title = title;
         self.open = true;
         self.graph_columns = 0;
         self.rows =
             lines.into_iter().map(|text| Row { graph: None, text, kind: None, event: None, discard: None }).collect();
         cx.notify();
+    }
+
+    pub fn review(
+        &mut self,
+        title: String,
+        before: &str,
+        after: &str,
+        apply: &'static str,
+        reject: &'static str,
+        cx: &mut Context<Self>,
+    ) {
+        use similar::{Algorithm, ChangeTag, TextDiff};
+
+        self.text(title, Vec::new(), cx);
+        self.action = Some(apply);
+        self.reject_label = Some(reject);
+        let diff = TextDiff::configure()
+            .algorithm(Algorithm::Patience)
+            .timeout(std::time::Duration::from_millis(40))
+            .diff_lines(before, after);
+        for group in diff.grouped_ops(3) {
+            if !self.rows.is_empty() {
+                self.rows.push(Row { graph: None, text: "…".into(), kind: None, event: None, discard: None });
+            }
+            for operation in group {
+                self.rows.extend(diff.iter_changes(&operation).map(|change| {
+                    let kind = match change.tag() {
+                        ChangeTag::Equal => LineKind::Context,
+                        ChangeTag::Delete => LineKind::Removed,
+                        ChangeTag::Insert => LineKind::Added,
+                    };
+                    let line = change.value().trim_end_matches(['\r', '\n']);
+                    let end = if change.missing_newline() { "  (no newline)" } else { "" };
+                    Row {
+                        graph: None,
+                        text: format!("{}{line}{end}", kind.prefix()),
+                        kind: Some(kind),
+                        event: None,
+                        discard: None,
+                    }
+                }));
+            }
+        }
+        if self.rows.is_empty() {
+            self.rows.push(Row {
+                graph: None,
+                text: "No text changes.".into(),
+                kind: None,
+                event: None,
+                discard: None,
+            });
+        }
     }
 
     pub fn diff(&mut self, title: String, text: &str, staged: bool, historical: bool, cx: &mut Context<Self>) {
@@ -255,21 +309,22 @@ impl Render for GitInspect {
                     .border_b_1()
                     .border_color(t.border)
                     .child(self.title.clone())
-                    .children(self.action.map(|(id, label)| {
+                    .children(self.action.map(|label| {
                         div()
                             .id("inspect-action")
                             .debug_selector(|| "apply-generated-code".into())
                             .cursor_pointer()
                             .text_color(t.heat_2)
                             .child(label)
-                            .on_click(cx.listener(move |_, _, _, cx| cx.emit(InspectEvent::Action(id))))
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(InspectEvent::ApplyReviewed)))
                     }))
                     .child(
                         div()
                             .id("close-git-inspect")
+                            .debug_selector(|| "reject-generated-change".into())
                             .ml_auto()
                             .cursor_pointer()
-                            .child("Close")
+                            .child(self.reject_label.unwrap_or("Close"))
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(InspectEvent::Close))),
                     ),
             )

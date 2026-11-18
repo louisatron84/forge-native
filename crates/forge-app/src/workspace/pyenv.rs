@@ -15,8 +15,7 @@ use forge_run::pyenv::{
 };
 use forge_run::RunSpec;
 use forge_sys::user_state::update_project_settings;
-use gpui_kit::{Context, PromptLevel, Window};
-use std::path::PathBuf;
+use gpui_kit::{Context, Window};
 
 /// What to do after a pip / venv run ends (its exit code).
 pub(crate) type AfterRun = Box<dyn FnOnce(&mut Workspace, Option<i32>, &mut Window, &mut Context<Workspace>)>;
@@ -553,7 +552,6 @@ impl Workspace {
         else {
             return;
         };
-        let has = root.join("requirements.txt").is_file();
         cx.spawn_in(window, async move |this, cx| {
             let text = match cx.background_executor().spawn(async move { freeze(&python) }).await {
                 Ok(t) => t,
@@ -562,34 +560,30 @@ impl Workspace {
                     return;
                 }
             };
-            let path: PathBuf = root.join("requirements.txt");
-            let write = move |ws: &mut Workspace, w: &mut Window, cx: &mut Context<Workspace>| match std::fs::write(
-                &path, &text,
-            ) {
-                Ok(()) => {
-                    ws.file_tree.update(cx, |t, cx| t.refresh_all(cx));
-                    ws.open_path(path.clone(), w, cx);
-                    ws.refresh_python_env(cx);
-                }
-                Err(e) => ws.alert(format!("Couldn't write requirements.txt: {e}"), w, cx),
-            };
             this.update_in(cx, |ws, window, cx| {
-                if !has {
-                    return write(ws, window, cx);
+                if ws.root.as_ref() != Some(&root) {
+                    return;
                 }
-                let answer = window.prompt(
-                    PromptLevel::Warning,
-                    "Replace requirements.txt with the packages installed now?",
-                    None,
-                    &["Replace", "Cancel"],
+                let relative = "requirements.txt";
+                let path = match forge_sys::connect::project_path(&root, relative) {
+                    Ok(path) => path,
+                    Err(error) => return ws.alert(error.to_string(), window, cx),
+                };
+                let mut change = match ws.generate_text_change(path, cx) {
+                    Ok(change) => change,
+                    Err(error) => return ws.alert(error, window, cx),
+                };
+                change.updated = text;
+                ws.review_text_change(
+                    change,
+                    "Export requirements",
+                    Some((root, relative.into())),
+                    |ws, path, window, cx| {
+                        ws.open_path(path, window, cx);
+                        ws.refresh_python_env(cx);
+                    },
                     cx,
                 );
-                cx.spawn_in(window, async move |this, cx| {
-                    if answer.await == Ok(0) {
-                        this.update_in(cx, |ws, w, cx| write(ws, w, cx)).ok();
-                    }
-                })
-                .detach();
             })
             .ok();
         })

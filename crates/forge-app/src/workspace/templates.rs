@@ -1,7 +1,12 @@
-use super::Workspace;
+use super::{generated::NewFiles, Workspace};
 use crate::{app_state, palette::Choice};
-use forge_core::templates::{builtin_templates, fill, render_template, ProjectTemplate};
+use forge_core::templates::{builtin_templates, fill, render_template, ProjectTemplate, TemplateFile};
 use gpui_kit::{Context, Window};
+
+fn contents(files: Vec<TemplateFile>) -> Vec<(String, Vec<u8>)> {
+    files.into_iter().map(|file| (file.path, file.content.into_bytes())).collect()
+}
+
 impl Workspace {
     pub(super) fn choose_project_template(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let store = app_state::state(cx).user.dir().join("templates");
@@ -51,38 +56,43 @@ impl Workspace {
                     p.prompt(
                         "New project name",
                         "",
-                        "Create",
-                        move |_, name, window, cx| {
+                        "Preview",
+                        move |ws, name, window, cx| {
                             let files = render_template(&template, &name);
-                            let parent = parent.clone();
-                            let root = root.clone();
+                            let project = match forge_sys::templates::project_target(&parent, &name, &files) {
+                                Ok(project) => project,
+                                Err(error) => return ws.alert(error.to_string(), window, cx),
+                            };
+                            let current = root.clone();
                             let open = template.open.as_ref().map(|s| fill(s, &name));
-                            cx.spawn_in(window, async move |this, cx| {
-                                let result = cx
-                                    .background_executor()
-                                    .spawn(async move { forge_sys::templates::create_project(&parent, &name, &files) })
-                                    .await;
-                                this.update_in(cx, |ws, window, cx| match result {
-                                    Ok(project) => {
-                                        let project = forge_sys::files::canonical_path(&project);
-                                        if ws.root != root {
-                                            ws.status_note(format!("Created {}", project.display()), cx);
-                                            return;
-                                        }
-                                        ws.open_folder(project.clone(), window, cx);
-                                        if ws.root.as_ref() == Some(&project) {
-                                            if let Some(open) = open
-                                                .and_then(|rel| forge_sys::connect::project_path(&project, &rel).ok())
-                                            {
-                                                ws.open_path(open, window, cx);
-                                            }
+                            ws.review_new_files(
+                                NewFiles {
+                                    directory: project.clone(),
+                                    files: contents(files),
+                                    source: "Project template",
+                                    exclusive: true,
+                                },
+                                move |summary, ws, window, cx| {
+                                    if summary.written == 0 {
+                                        return;
+                                    }
+                                    let project = forge_sys::files::canonical_path(&project);
+                                    if ws.root != current {
+                                        return ws.status_note(format!("Created {}", project.display()), cx);
+                                    }
+                                    ws.open_folder(project.clone(), window, cx);
+                                    if ws.root.as_ref() == Some(&project) {
+                                        if let Some(open) = open
+                                            .and_then(|rel| forge_sys::connect::project_path(&project, &rel).ok())
+                                            .filter(|p| p.is_file())
+                                        {
+                                            ws.open_path(open, window, cx);
                                         }
                                     }
-                                    Err(e) => ws.alert(e.to_string(), window, cx),
-                                })
-                                .ok();
-                            })
-                            .detach();
+                                },
+                                window,
+                                cx,
+                            );
                         },
                         window,
                         cx,
@@ -105,21 +115,35 @@ impl Workspace {
             p.prompt(
                 "Save project as template",
                 "",
-                "Save",
+                "Preview",
                 move |_, name, window, cx| {
                     let root = root.clone();
                     let store = store.clone();
                     cx.spawn_in(window, async move |this, cx| {
                         let result = cx
                             .background_executor()
-                            .spawn(async move { forge_sys::templates::save_template(&root, &store, &name, "") })
+                            .spawn(async move { forge_sys::templates::plan_save_template(&root, &store, &name, "") })
                             .await;
-                        this.update(cx, |ws, cx| match result {
-                            Ok(_) => ws.status_note(
-                                "Project template saved. It is available in New Project from Template.",
+                        this.update_in(cx, |ws, window, cx| {
+                            let (directory, files) = match result {
+                                Ok(prepared) => prepared,
+                                Err(error) => return ws.alert(error.to_string(), window, cx),
+                            };
+                            ws.review_new_files(
+                                NewFiles {
+                                    directory,
+                                    files: contents(files),
+                                    source: "Save project template",
+                                    exclusive: true,
+                                },
+                                |summary, ws, _, cx| {
+                                    if summary.written > 0 && !summary.failed {
+                                        ws.status_note("Saved the approved template files.", cx);
+                                    }
+                                },
+                                window,
                                 cx,
-                            ),
-                            Err(e) => ws.status_note(e.to_string(), cx),
+                            );
                         })
                         .ok();
                     })

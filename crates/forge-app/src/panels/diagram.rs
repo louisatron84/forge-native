@@ -157,7 +157,7 @@ impl Render for DiagramPanel {
                         .overflow_hidden()
                         .border_1()
                         .border_color(if self.selected.as_ref() == Some(&id) { t.heat_2 } else { t.line_strong })
-                        .rounded(px(3.))
+                        .rounded(t.corner(px(3.)))
                         .p(px(6. * self.zoom))
                         .bg(t.raised)
                         .text_size(px(11. * self.zoom))

@@ -44,7 +44,7 @@ impl Backups {
 
     pub fn write(&self, data: &BackupData) -> io::Result<()> {
         use std::io::Write;
-        crate::text_file::write_atomic(&self.dir.join(backup_name(&data.path)), |file| {
+        crate::file_write::replace_with(&self.dir.join(backup_name(&data.path)), |file| {
             let mut writer = io::BufWriter::new(file);
             serde_json::to_writer(&mut writer, data).map_err(io::Error::other)?;
             writer.flush()
@@ -177,9 +177,9 @@ mod tests {
         std::fs::create_dir(&store).unwrap();
         std::fs::hard_link(&victim, store.join(backup_name("/project/main.py"))).unwrap();
         let backups = Backups::new(store);
-        backups.write(&data("/project/main.py", "edited")).unwrap();
+        assert!(backups.write(&data("/project/main.py", "edited")).is_err());
         assert_eq!(std::fs::read_to_string(victim).unwrap(), "keep me");
-        assert_eq!(backups.list()[0].text, "edited");
+        assert!(backups.list().is_empty());
     }
 
     #[test]

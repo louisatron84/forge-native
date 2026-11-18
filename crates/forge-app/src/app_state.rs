@@ -1,7 +1,7 @@
 //! What every window shares: your settings, keyboard shortcuts and saved
 //! files in Forge's data folder, and the theme built from them.
 
-use crate::theme::{ForgeTheme, Theme, ThemeName};
+use crate::theme::{ForgeTheme, Theme};
 use forge_core::commands::Keymap;
 use forge_core::settings::Settings;
 use forge_sys::user_state::{data_dir, UserState};
@@ -12,6 +12,7 @@ use std::sync::Arc;
 pub struct AppState {
     pub updater: Arc<forge_update::Updater>,
     pub restart_after_update: bool,
+    pub legacy_import_offered: bool,
     pub user: UserState,
     pub settings: Settings,
     /// Why settings.json couldn't be read (the defaults are used).
@@ -25,14 +26,7 @@ impl Global for AppState {}
 
 pub fn init(cx: &mut App) {
     let user = UserState::new(data_dir());
-    let migration_error = forge_sys::user_state::legacy_data_dir().and_then(|old| {
-        std::fs::create_dir_all(user.dir())
-            .and_then(|_| forge_sys::user_state::import_legacy(&old, user.dir()))
-            .err()
-            .map(|e| format!("Couldn't import Electron settings: {e}"))
-    });
     let (settings, settings_error) = user.settings();
-    let settings_error = settings_error.or(migration_error);
     let (overrides, keys_error) = user.keybindings();
     let mut keymap = Keymap::default();
     keymap.set_overrides(overrides);
@@ -45,6 +39,7 @@ pub fn init(cx: &mut App) {
         keys_error,
         updater,
         restart_after_update: false,
+        legacy_import_offered: false,
     });
     apply_theme(cx);
 }
@@ -59,11 +54,9 @@ pub fn settings(cx: &App) -> &Settings {
 
 /// Use the theme the settings ask for, here and in the shared widgets (inputs, menus, dialogs).
 pub fn apply_theme(cx: &mut App) {
-    let name = match cx.global::<AppState>().settings.theme {
-        forge_core::settings::Theme::Molten => ThemeName::Molten,
-        forge_core::settings::Theme::Plain => ThemeName::Plain,
-    };
+    let name = settings(cx).theme;
     let mut theme = Theme::get(name);
+    theme.corner_style = settings(cx).corner_style;
     theme.ui_scale = match state(cx).settings.density {
         forge_core::settings::Density::Compact => 0.88,
         forge_core::settings::Density::Normal => 1.0,
@@ -72,12 +65,12 @@ pub fn apply_theme(cx: &mut App) {
     let t = Arc::new(theme);
     cx.set_global(ForgeTheme(t.clone()));
     let kit = KitTheme::global_mut(cx);
-    kit.mode = ThemeMode::Dark;
+    kit.mode = if name.is_light() { ThemeMode::Light } else { ThemeMode::Dark };
     kit.font_family = crate::theme::UI_FONT.into();
     kit.font_size = px(13.0);
     kit.mono_font_family = crate::theme::CODE_FONT.into();
-    kit.radius = px(2.0);
-    kit.radius_lg = px(3.0);
+    kit.radius = t.corner(px(2.0));
+    kit.radius_lg = t.corner(px(3.0));
     let c = &mut kit.colors;
     c.background = t.bg;
     c.foreground = t.fg;
@@ -132,10 +125,12 @@ pub fn apply_theme(cx: &mut App) {
 pub fn update_settings(cx: &mut App, f: impl FnOnce(&mut Settings)) -> std::io::Result<()> {
     let mut next = cx.global::<AppState>().settings.clone();
     f(&mut next);
-    let theme_changed = next.theme != state(cx).settings.theme || next.density != state(cx).settings.density;
+    let previous = settings(cx);
+    let appearance_changed =
+        next.theme != previous.theme || next.density != previous.density || next.corner_style != previous.corner_style;
     cx.global::<AppState>().user.save_settings(&next)?;
     cx.global_mut::<AppState>().settings = next;
-    if theme_changed {
+    if appearance_changed {
         apply_theme(cx);
     } else {
         cx.refresh_windows();

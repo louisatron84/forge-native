@@ -13,10 +13,12 @@ mod debug;
 mod dock;
 mod editors;
 mod floating;
+mod generated;
 mod git;
 mod graph;
 mod inspectors;
 mod lsp;
+mod menus;
 mod nav;
 mod openapi;
 mod pipeline;
@@ -50,7 +52,6 @@ use forge_core::settings::{effective_settings, ProjectSettings, Settings, PROJEC
 use forge_core::tabs::{is_inside, renamed_path, same_path, DocId, Tabs};
 use forge_sys::backups::{BackupAction, BackupData, BackupKeeper, Backups, DocSnapshot};
 use forge_sys::files::{list_files, trash_entry};
-use forge_sys::project_dir::{prepare_project_dir, ProjectDirResult};
 use forge_sys::text_file::{read_text_file, write_text_file, TextFile};
 use forge_sys::user_state::read_project_settings;
 use forge_text::{EditKind, Eol, Pos};
@@ -118,6 +119,9 @@ pub struct Workspace {
     pub(crate) file_tree: Entity<FileTree>,
     pub(crate) git_panel: Entity<crate::panels::git::GitPanel>,
     pub(crate) git_inspect: Entity<crate::panels::git_inspect::GitInspect>,
+    change_review: Entity<crate::panels::git_inspect::GitInspect>,
+    generated_changes: std::collections::VecDeque<generated::ChangeReview>,
+    pending_reviewed_writes: HashMap<DocId, generated::PendingWrite>,
     pub(crate) git: git::GitState,
     graph: graph::GraphState,
     pub(crate) project_graph: Entity<crate::panels::graph::GraphPanel>,
@@ -205,6 +209,7 @@ pub fn open_window(folder: Option<PathBuf>, cx: &mut App) {
                 Some(f) => ws.open_folder(f, window, cx),
                 None => ws.reopen_last(window, cx),
             }
+            ws.offer_legacy_import(window, cx);
             ws.focus_editor(window, cx);
         });
         cx.new(|cx| gpui_kit::component::Root::new(ws, window, cx))
@@ -231,6 +236,7 @@ impl Workspace {
         let box_content = cx.new(|cx| crate::panels::openapi::BoxContent::new(connect.clone(), openapi.clone(), cx));
         let toolbox = cx.new(|cx| crate::panels::connect::Toolbox::new(connect.clone(), cx));
         let git_inspect = cx.new(|_| crate::panels::git_inspect::GitInspect::default());
+        let change_review = cx.new(|_| crate::panels::git_inspect::GitInspect::default());
         let debug_panel = cx.new(|cx| crate::panels::debug::DebugPanel::new(window, cx));
         let palette = cx.new(|cx| Palette::new(window, cx));
         let find_bar = cx.new(|cx| FindBar::new(window, cx));
@@ -315,6 +321,7 @@ impl Workspace {
         );
         subs.push(cx.subscribe_in(&debug_panel, window, Self::on_debug_event));
         subs.push(cx.subscribe_in(&git_inspect, window, Self::on_git_inspect));
+        subs.push(cx.subscribe_in(&change_review, window, Self::on_change_review));
         subs.push(cx.observe_window_activation(window, |this, window, cx| {
             if window.is_window_active() {
                 this.file_tree.update(cx, |tree, _| tree.refresh_git());
@@ -408,6 +415,9 @@ impl Workspace {
             file_tree,
             git_panel,
             git_inspect,
+            change_review,
+            generated_changes: Default::default(),
+            pending_reviewed_writes: HashMap::new(),
             git: git::GitState::default(),
             graph: graph::GraphState::default(),
             project_graph,
@@ -768,17 +778,29 @@ impl Workspace {
     }
 
     pub fn open_folder_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_path_dialog(true, window, cx);
+    }
+
+    fn open_path_dialog(&mut self, folder: bool, window: &mut Window, cx: &mut Context<Self>) {
         let picked = cx.prompt_for_paths(gpui_kit::PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Open Folder".into()),
+            files: !folder,
+            directories: folder,
+            multiple: !folder,
+            prompt: Some(if folder { "Open Folder" } else { "Open File" }.into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             if let Ok(Ok(Some(paths))) = picked.await {
-                if let Some(p) = paths.into_iter().next() {
-                    this.update_in(cx, |ws, window, cx| ws.open_folder(p, window, cx)).ok();
-                }
+                let _ = this.update_in(cx, |ws, window, cx| {
+                    if folder {
+                        if let Some(path) = paths.into_iter().next() {
+                            ws.open_folder(path, window, cx);
+                        }
+                    } else {
+                        for path in paths {
+                            ws.open_path(path, window, cx);
+                        }
+                    }
+                });
             }
         })
         .detach();
@@ -842,6 +864,7 @@ impl Workspace {
             return;
         }
         self.save_state_now(cx);
+        self.clear_change_reviews(cx);
         self.stop_debug(cx);
         self.debug.breakpoints.saved.clear();
         self.debug.watches.clear();
@@ -850,18 +873,6 @@ impl Workspace {
         self.stop_language_server(cx);
         self.external_diagnostics.clear();
         let path_str = folder.to_string_lossy().into_owned();
-        match prepare_project_dir(&folder) {
-            ProjectDirResult::Migrated => self.status_note("Moved project settings from .ideforfun/ to .forge/", cx),
-            ProjectDirResult::Copied => {
-                self.status_note("Copied project settings to .forge/ (the old .ideforfun/ folder couldn't be moved)", cx)
-            }
-            ProjectDirResult::Error => self.alert(
-                "This project's settings are in .ideforfun/, but Forge couldn't move or copy them to .forge/ (a file may be in use). They aren't used this time: close other programs using the folder and open it again.",
-                window,
-                cx,
-            ),
-            ProjectDirResult::None | ProjectDirResult::Both => {}
-        }
         let _ = app_state::state(cx).user.add_recent(&path_str);
         self.root = Some(folder.clone());
         self.load_boxes(&folder, window, cx);
@@ -884,6 +895,7 @@ impl Workspace {
         self.refresh_recent(cx);
         self.restore_layout(&path_str, window, cx);
         self.offer_restore(&path_str, window, cx);
+        self.offer_legacy_project_import(folder, window, cx);
         self.update_title(window, cx);
         cx.notify();
     }
@@ -1199,6 +1211,7 @@ impl Workspace {
     }
 
     fn forget_doc(&mut self, id: DocId, cx: &mut Context<Self>) {
+        self.pending_reviewed_writes.remove(&id);
         if let Some(doc) = self.docs.remove(&id) {
             for ed in &self.editors {
                 ed.update(cx, |e, _| e.forget(&doc));
@@ -1216,8 +1229,20 @@ impl Workspace {
             let d = &doc.read(cx).doc;
             (d.path().to_owned(), d.text(), d.encoding)
         };
-        match write_text_file(Path::new(&path), &text, encoding) {
+        let result = self.pending_reviewed_writes.get(&id).map_or_else(
+            || write_text_file(Path::new(&path), &text, encoding),
+            |write| {
+                let bytes = forge_sys::text_file::encode(&text, encoding);
+                if forge_sys::generated_history::hash(&bytes) == write.after {
+                    self.write_reviewed(Path::new(&path), write.before.as_deref(), &bytes, write.source, cx)
+                } else {
+                    forge_sys::file_write::replace(Path::new(&path), &bytes)
+                }
+            },
+        );
+        match result {
             Ok(()) => {
+                self.pending_reviewed_writes.remove(&id);
                 doc.update(cx, |d, cx| {
                     d.doc.mark_saved();
                     cx.emit(DocumentEvent::Changed);
@@ -1276,7 +1301,9 @@ impl Workspace {
             }
         } else if same_path(path, &st.user.settings_path().to_string_lossy()) {
             let (settings, err) = st.user.settings();
-            let theme_changed = settings.theme != st.settings.theme;
+            let theme_changed = settings.theme != st.settings.theme
+                || settings.corner_style != st.settings.corner_style
+                || settings.density != st.settings.density;
             cx.global_mut::<AppState>().settings = settings;
             if theme_changed {
                 app_state::apply_theme(cx);
@@ -1338,8 +1365,7 @@ impl Workspace {
         self.save_layouts_now(cx);
         let dirty: Vec<DocId> = self.tabs.docs().into_iter().filter(|d| self.is_dirty(*d, cx)).collect();
         if dirty.is_empty() || self.closing {
-            self.stop_debug(cx);
-            self.close_floating(cx);
+            self.stop_for_close(cx);
             return true;
         }
         let names: Vec<String> =
@@ -1363,8 +1389,7 @@ impl Workspace {
                     _ => false,
                 };
                 if close {
-                    ws.stop_debug(cx);
-                    ws.close_floating(cx);
+                    ws.stop_for_close(cx);
                     ws.closing = true;
                     // Thrown-away changes don't need their crash backups.
                     for id in &dirty {
@@ -1382,6 +1407,16 @@ impl Workspace {
         })
         .detach();
         false
+    }
+
+    fn stop_for_close(&mut self, cx: &mut Context<Self>) {
+        self.clear_change_reviews(cx);
+        self.stop_debug(cx);
+        self.stop_run(cx);
+        self.stop_language_server(cx);
+        self.tests.update(cx, |tests, _| tests.stop());
+        self.terminal.update(cx, |terminal, _| terminal.stop_all());
+        self.close_floating(cx);
     }
 
     // ---------- files renamed or deleted ----------
@@ -1803,7 +1838,11 @@ impl Focusable for Workspace {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.global::<crate::theme::ForgeTheme>().0.clone();
-        let dock = self.render_dock(window, cx);
+        let dock = if self.change_review.read(cx).open {
+            self.change_review.clone().into_any_element()
+        } else {
+            self.render_dock(window, cx)
+        };
         div()
             .id("workspace")
             .key_context("Workspace")
@@ -1815,6 +1854,7 @@ impl Render for Workspace {
             .text_color(t.fg)
             .font_family(crate::theme::UI_FONT)
             .text_size(px(13.0))
+            .child(self.render_menu_bar(cx))
             .child(self.render_toolbar(cx))
             .when(self.editing_layout, |d| d.child(self.render_edit_bar(cx)))
             .child(div().flex_1().min_h_0().flex().child(dock))

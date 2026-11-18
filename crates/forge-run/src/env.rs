@@ -24,8 +24,9 @@ pub fn set_dotenv_value(root: &Path, name: &str, value: &str) -> io::Result<()> 
     if !ok {
         return Err(io::Error::other(format!("\"{name}\" isn't a valid variable name (letters, digits and _).")));
     }
-    let text = std::fs::read_to_string(env_path(root)).unwrap_or_default();
-    std::fs::write(env_path(root), set_dotenv_var(&text, name, value))
+    let path = forge_sys::connect::project_path(root, ".env")?;
+    let text = read_optional(&path)?;
+    forge_sys::file_write::replace(&path, set_dotenv_var(&text, name, value))
 }
 
 /// The variables that have a value (names only: the window never needs the secrets).
@@ -40,11 +41,18 @@ pub fn gitignore_has_env(root: &Path) -> bool {
 }
 
 pub fn add_env_to_gitignore(root: &Path) -> io::Result<()> {
-    let path = root.join(".gitignore");
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let path = forge_sys::connect::project_path(root, ".gitignore")?;
+    let text = read_optional(&path)?;
     let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
     let sep = if !text.is_empty() && !text.ends_with('\n') { eol } else { "" };
-    std::fs::write(path, format!("{text}{sep}.env{eol}"))
+    forge_sys::file_write::replace(&path, format!("{text}{sep}.env{eol}"))
+}
+
+fn read_optional(path: &Path) -> io::Result<String> {
+    match std::fs::read_to_string(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(String::new()),
+        result => result,
+    }
 }
 
 /// The environment for a process: real environment + `.env` (for names it lacks) + `extra`.

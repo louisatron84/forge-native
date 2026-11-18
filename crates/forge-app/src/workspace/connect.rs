@@ -1,13 +1,16 @@
 //! API-box persistence, preview and undoable generated source edits.
 //! Replaces the controller in `src/renderer/boxes/controller.ts`.
-use super::Workspace;
+use super::{
+    generated::{ChangeReview, TextChange},
+    Workspace,
+};
 use crate::{palette::Choice, panels::connect::ConnectEvent};
 use forge_core::{
     box_code::{block_hash, generate_block},
     box_sync::{block_state, find_block, insert_block, replace_block, Block, BlockState},
     boxes::{normalize_boxes, serialize_boxes, HTTP_METHODS},
 };
-use gpui_kit::{Context, PromptLevel, Task, Window};
+use gpui_kit::{AppContext, Context, PromptLevel, Task, Window};
 use std::{
     path::{Path, PathBuf},
     time::Duration,
@@ -21,17 +24,13 @@ pub(super) struct ConnectState {
     save: Option<Task<()>>,
     prepare: Option<Task<()>>,
     test: Option<Task<()>>,
-    preview: Option<Preview>,
 }
 struct Preview {
     root: PathBuf,
-    path: PathBuf,
     relative: String,
     id: String,
     block: String,
-    original: String,
-    disk_original: Option<String>,
-    updated: String,
+    text: TextChange,
     remove: bool,
 }
 impl Workspace {
@@ -166,7 +165,6 @@ impl Workspace {
                 self.queue_connect_sync(window, cx);
             }
             ConnectEvent::Preview => self.preview_box(false, false, window, cx),
-            ConnectEvent::Apply => self.apply_box_preview(window, cx),
             ConnectEvent::PickMethod => {
                 let choices = HTTP_METHODS
                     .into_iter()
@@ -215,103 +213,73 @@ impl Workspace {
             Ok(path) => path,
             Err(e) => return self.alert(e.to_string(), window, cx),
         };
-        if !path.exists() {
-            if let Err(e) = forge_sys::files::create_entry(&root, ".env", false) {
-                return self.alert(e.to_string(), window, cx);
-            }
-        }
-        let loaded = if let Some(id) = self.find_doc(&path.to_string_lossy(), cx) {
-            Ok(Some(id))
-        } else {
-            self.load_doc(&path, false, cx)
+        let mut change = match self.generate_text_change(path, cx) {
+            Ok(change) => change,
+            Err(error) => return self.alert(error, window, cx),
         };
-        let id = match loaded {
-            Ok(Some(id)) => id,
-            Ok(None) => return,
-            Err(e) => return self.alert(e, window, cx),
-        };
-        let doc = self.docs[&id].clone();
-        let dirty = doc.read(cx).doc.dirty();
-        let original = doc.read(cx).doc.text();
-        let known = forge_core::dotenv::parse_dotenv(&original);
-        let mut updated = original.clone();
+        let known = forge_core::dotenv::parse_dotenv(&change.original);
         for name in names {
             if !known.contains_key(&name) {
-                updated = forge_core::dotenv::set_dotenv_var(&updated, &name, "");
+                change.updated = forge_core::dotenv::set_dotenv_var(&change.updated, &name, "");
             }
         }
-        if updated != original {
-            doc.update(cx, |d, cx| {
-                d.edit(None, cx, |doc| {
-                    let forge_text::Doc { buffer, history, .. } = doc;
-                    history.transact(buffer, forge_text::EditKind::Other, forge_text::Pos::new(0, 0), |b| {
-                        b.set_text(&updated);
-                        forge_text::Pos::new(0, 0)
-                    });
-                })
-            });
-            if !dirty {
-                self.save(Some(id), window, cx);
-            }
+        if change.updated == change.original && change.disk.is_some() {
+            self.open_path(change.path, window, cx);
+            return;
         }
-        self.open_path(path, window, cx);
-        self.reveal_panel("editor", cx);
-        self.focus_editor(window, cx);
+        self.review_text_change(
+            change,
+            "Prepare API environment",
+            Some((root, ".env".into())),
+            |ws, path, window, cx| {
+                ws.reveal_panel("editor", cx);
+                ws.open_path(path, window, cx);
+            },
+            cx,
+        );
     }
+
     fn ignore_box_env(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(root) = self.root.clone() else { return };
         let path = match forge_sys::connect::project_path(&root, ".gitignore") {
             Ok(p) => p,
             Err(e) => return self.alert(e.to_string(), window, cx),
         };
-        if !path.exists() {
-            if let Err(e) = forge_sys::files::create_entry(&root, ".gitignore", false) {
-                return self.alert(e.to_string(), window, cx);
-            }
-        }
-        let loaded = if let Some(id) = self.find_doc(&path.to_string_lossy(), cx) {
-            Ok(Some(id))
-        } else {
-            self.load_doc(&path, false, cx)
+        let mut change = match self.generate_text_change(path, cx) {
+            Ok(change) => change,
+            Err(error) => return self.alert(error, window, cx),
         };
-        let id = match loaded {
-            Ok(Some(id)) => id,
-            Ok(None) => return,
-            Err(e) => return self.alert(e, window, cx),
-        };
-        let doc = self.docs[&id].clone();
-        let dirty = doc.read(cx).doc.dirty();
-        let text = doc.read(cx).doc.text();
-        if !text.lines().any(|line| line.trim() == ".env") {
-            let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
-            let updated = format!("{text}{}.env{eol}", if text.is_empty() || text.ends_with('\n') { "" } else { eol });
-            doc.update(cx, |d, cx| {
-                d.edit(None, cx, |doc| {
-                    let forge_text::Doc { buffer, history, .. } = doc;
-                    history.transact(buffer, forge_text::EditKind::Other, forge_text::Pos::new(0, 0), |b| {
-                        b.set_text(&updated);
-                        forge_text::Pos::new(0, 0)
-                    });
-                })
-            });
+        if change.original.lines().any(|line| line.trim() == ".env") {
+            self.status_note(".gitignore already contains .env.", cx);
+            return;
         }
-        let saved = !dirty && self.save(Some(id), window, cx);
-        self.connect.update(cx, |p, cx| {
-            p.env_ignored = saved;
-            p.status = if saved {
-                "Added .env to .gitignore."
-            } else {
-                "Added .env to the unsaved .gitignore buffer. Save that file to finish."
-            }
-            .into();
-            cx.notify();
-        });
-        if dirty {
-            self.open_path(path, window, cx);
-            self.reveal_panel("editor", cx);
-            self.focus_editor(window, cx);
-        }
-        self.refresh_git(cx);
+        let text = &change.original;
+        let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
+        change.updated = format!("{text}{}.env{eol}", if text.is_empty() || text.ends_with('\n') { "" } else { eol });
+        self.review_text_change(
+            change,
+            "Ignore API environment in Git",
+            Some((root, ".gitignore".into())),
+            |ws, path, window, cx| {
+                let dirty = ws.find_doc(&path.to_string_lossy(), cx).is_some_and(|id| ws.is_dirty(id, cx));
+                ws.connect.update(cx, |p, cx| {
+                    p.env_ignored = !dirty;
+                    p.status = if dirty {
+                        "Added .env to the unsaved .gitignore buffer. Save that file to finish."
+                    } else {
+                        "Added .env to .gitignore."
+                    }
+                    .into();
+                    cx.notify();
+                });
+                if dirty {
+                    ws.reveal_panel("editor", cx);
+                    ws.open_path(path, window, cx);
+                }
+                ws.refresh_git(cx);
+            },
+            cx,
+        );
     }
     fn preview_box(&mut self, force: bool, remove: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(root) = self.root.clone() else {
@@ -331,68 +299,50 @@ impl Workspace {
             Ok(p) => p,
             Err(e) => return self.alert(e.to_string(), window, cx),
         };
-        let open = self
-            .docs
-            .values()
-            .find(|d| forge_core::tabs::same_path(d.read(cx).doc.path(), &path.to_string_lossy()))
-            .map(|d| d.read(cx).doc.text());
+        let open = self.find_doc(&path.to_string_lossy(), cx).map(|id| {
+            let doc = &self.docs[&id].read(cx).doc;
+            (doc.text(), doc.dirty())
+        });
         let generation = self.connect_state.generation;
         let revision = self.connect_state.revision;
         self.connect_state.prepare = Some(cx.spawn_in(window, async move |this, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    let disk_original = if path.exists() {
-                        match forge_sys::text_file::read_text_file(&path, false, None).map_err(|e| e.to_string())? {
-                            forge_sys::text_file::TextFile::Text { text, .. } => Some(text),
-                            _ => return Err("Choose a normal text Python file.".to_owned()),
-                        }
-                    } else {
-                        None
-                    };
-                    let original = open.unwrap_or_else(|| disk_original.clone().unwrap_or_default());
-                    let state = block_state(&original, &api);
+                    let mut text = TextChange::read(path, open)?;
+                    let original = &text.original;
+                    let state = block_state(original, &api);
                     if state == BlockState::Broken {
                         return Err(
-                            "The generated-code markers are damaged. Repair them before updating this box.".into()
+                            "The generated-code markers are damaged. Repair them before updating this box.".to_owned()
                         );
                     }
                     if state == BlockState::Edited && !force && !remove {
                         return Ok(Err((api.id.clone(), "The generated block was edited by hand.".to_owned())));
                     }
                     let block = generate_block(&api, api.target.mode == "new");
-                    let updated = if remove {
-                        if !matches!(find_block(&original, &api.id), Block::Found(_)) {
+                    text.updated = if remove {
+                        if !matches!(find_block(original, &api.id), Block::Found(_)) {
                             return Err(
                                 "The generated block is missing. Choose Keep code to remove only the box.".into()
                             );
                         }
-                        forge_core::box_sync::remove_block(&original, &api.id)
+                        forge_core::box_sync::remove_block(original, &api.id)
                     } else {
-                        match find_block(&original, &api.id) {
-                            Block::Found(_) => replace_block(&original, &api.id, &block)?,
+                        match find_block(original, &api.id) {
+                            Block::Found(_) => replace_block(original, &api.id, &block)?,
                             Block::Missing => {
                                 if api.target.mode == "new" && !original.is_empty() {
                                     return Err(
                                         "The target file already exists. Choose Append or a new Python file.".into()
                                     );
                                 }
-                                insert_block(&original, &block)
+                                insert_block(original, &block)
                             }
                             Block::Broken => return Err("Damaged block markers".into()),
                         }
                     };
-                    Ok(Ok(Preview {
-                        root,
-                        path,
-                        relative: api.target.file,
-                        id: api.id,
-                        block,
-                        original,
-                        disk_original,
-                        updated,
-                        remove,
-                    }))
+                    Ok(Ok(Preview { root, relative: api.target.file, id: api.id, block, text, remove }))
                 })
                 .await;
             this.update_in(cx, |ws, window, cx| {
@@ -437,27 +387,30 @@ impl Workspace {
                         .detach();
                     }
                     Ok(Ok(preview)) => {
-                        let title = format!("Generated Python — {}", preview.relative);
-                        let lines = preview.updated.lines().map(str::to_owned).collect();
-                        let label = if preview.remove { "Remove generated code" } else { "Apply generated code" };
-                        ws.connect_state.preview = Some(preview);
-                        ws.git.diff = None;
-                        ws.git_inspect.update(cx, |p, cx| {
-                            p.text(title, lines, cx);
-                            p.action = Some(("connect.apply", label));
-                        });
-                        ws.reveal_panel("editor", cx);
-                        cx.notify();
+                        let label = preview.text.label(ws, cx);
+                        let (before, after) = preview.text.diff();
+                        ws.review_change(
+                            ChangeReview::new(
+                                format!("Generated Python · {}", preview.relative),
+                                before,
+                                after,
+                                label,
+                                "Reject",
+                                move |apply, ws, window, cx| {
+                                    if apply {
+                                        ws.apply_box_preview(preview, window, cx);
+                                    }
+                                },
+                            ),
+                            cx,
+                        );
                     }
                 }
             })
             .ok();
         }));
     }
-    pub(super) fn apply_box_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(preview) = self.connect_state.preview.take() else {
-            return;
-        };
+    fn apply_box_preview(&mut self, preview: Preview, window: &mut Window, cx: &mut Context<Self>) {
         if self.root.as_ref() != Some(&preview.root) {
             return;
         }
@@ -473,71 +426,21 @@ impl Workspace {
             Ok(p) => p,
             Err(e) => return self.alert(e.to_string(), window, cx),
         };
-        if path != preview.path {
+        if path != preview.text.path {
             return self.alert("The target moved. Preview again.", window, cx);
         }
-        let disk_current = if path.exists() {
-            match forge_sys::text_file::read_text_file(&path, false, None) {
-                Ok(forge_sys::text_file::TextFile::Text { text, .. }) => Some(text),
-                _ => return self.alert("The target cannot be read. Preview again.", window, cx),
-            }
-        } else {
-            None
+        let original = self.find_doc(&path.to_string_lossy(), cx).is_none().then(|| preview.text.original.clone());
+        let (actual, encoding) = match self.apply_reviewed_text(preview.text, "Connect generated code", window, cx) {
+            Ok(result) => result,
+            Err(error) => return self.alert(error, window, cx),
         };
-        if disk_current != preview.disk_original {
-            return self.alert(
-                "The file changed on disk after the preview. Preview again to preserve those edits.",
-                window,
-                cx,
-            );
+        if let Some(original) = original {
+            let path_string = forge_sys::files::canonical_path(&path).to_string_lossy().into_owned();
+            let doc = cx.new(|_| crate::document::Document::with_options(path_string, &original, encoding, false));
+            let id = self.adopt_doc(doc, cx);
+            self.sync_reviewed_doc(id, &path, &actual, encoding, window, cx);
         }
-        let current = self
-            .docs
-            .values()
-            .find(|d| forge_core::tabs::same_path(d.read(cx).doc.path(), &path.to_string_lossy()))
-            .map(|d| d.read(cx).doc.text());
-        let current = match current {
-            Some(s) => s,
-            None => disk_current.unwrap_or_default(),
-        };
-        if current != preview.original {
-            return self.alert(
-                "The source changed after the preview. Preview again to preserve those edits.",
-                window,
-                cx,
-            );
-        }
-        if !path.exists() {
-            if let Err(e) = forge_sys::files::create_entry(&preview.root, &preview.relative, false) {
-                return self.alert(e.to_string(), window, cx);
-            }
-        }
-        let loaded = if let Some(id) = self.find_doc(&path.to_string_lossy(), cx) {
-            Ok(Some(id))
-        } else {
-            self.load_doc(&path, false, cx)
-        };
-        let id = match loaded {
-            Ok(Some(id)) => id,
-            Ok(None) => return,
-            Err(e) => return self.alert(e, window, cx),
-        };
-        let doc = self.docs[&id].clone();
-        let was_dirty = doc.read(cx).doc.dirty();
-        doc.update(cx, |d, cx| {
-            d.edit(None, cx, |doc| {
-                let forge_text::Doc { buffer, history, .. } = doc;
-                history.transact(buffer, forge_text::EditKind::Other, forge_text::Pos::new(0, 0), |b| {
-                    b.set_text(&preview.updated);
-                    forge_text::Pos::new(0, 0)
-                });
-            })
-        });
         self.open_path(path, window, cx);
-        if !was_dirty {
-            self.save(Some(id), window, cx);
-        }
-        let actual = doc.read(cx).doc.text();
         let hash = match find_block(&actual, &preview.id) {
             Block::Found(found) => block_hash(&found.text),
             _ => block_hash(&preview.block),
@@ -566,6 +469,7 @@ impl Workspace {
         self.rebuild_graph(cx);
         self.file_tree.update(cx, |t, cx| t.refresh_all(cx));
         self.queue_graph_scan(None, cx);
+        self.reveal_panel("editor", cx);
         self.focus_editor(window, cx);
     }
     fn remove_api_box(&mut self, window: &mut Window, cx: &mut Context<Self>) {

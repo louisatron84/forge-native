@@ -1,4 +1,17 @@
-use forge_sys::user_state::import_legacy;
+use forge_sys::{
+    generated_history::History,
+    user_state::{finish_legacy_import, plan_legacy_import},
+};
+use std::{io, path::Path};
+
+fn import_legacy(old: &Path, native: &Path) -> io::Result<()> {
+    let Some(files) = plan_legacy_import(old, native)? else { return Ok(()) };
+    for file in files {
+        assert!(!native.join(&file.relative).exists(), "Planning must leave the destination untouched");
+        History::new(native).write(&native.join(&file.relative), None, &file.contents, "Import Electron settings")?;
+    }
+    finish_legacy_import(native)
+}
 
 #[test]
 fn imports_compatible_state_and_templates_once_without_overwriting_native_files() {

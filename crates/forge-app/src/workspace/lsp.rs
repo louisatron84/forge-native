@@ -4,7 +4,10 @@
 //! edits it asks for applied. Replaces the language-server parts of `main.ts`
 //! and `src/renderer/lsp/services.ts`.
 
-use super::Workspace;
+use super::{
+    generated::{ChangeReview, TextChange},
+    Workspace,
+};
 use crate::app_state;
 use crate::editor::EditorDiagnostic;
 use forge_core::tabs::same_path;
@@ -16,7 +19,9 @@ use forge_text::Pos;
 use futures::StreamExt;
 use gpui_kit::{Context, Task, Window};
 use serde_json::{json, Value};
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -52,6 +57,27 @@ enum LspEvent {
     Diagnostics,
     Exited(u64),
     ApplyEdit(Value, Value),
+}
+
+type EditReply = Box<dyn FnOnce(bool)>;
+
+struct EditReview {
+    approved: Cell<bool>,
+    reply: RefCell<Option<EditReply>>,
+}
+
+struct LanguageEdit {
+    relative: Option<String>,
+    document: Option<forge_core::tabs::DocId>,
+    change: TextChange,
+}
+
+impl Drop for EditReview {
+    fn drop(&mut self) {
+        if let Some(reply) = self.reply.get_mut().take() {
+            reply(false);
+        }
+    }
 }
 
 /// A server position (UTF-16 column) as a character position in this line.
@@ -122,8 +148,16 @@ impl Workspace {
                         }
                         if let Some(request) = event.get("request") {
                             let edits = forge_lsp::navigation::parse_workspace_edit(&event["params"]["edit"]);
-                            let applied = ws.apply_file_edits(&edits, window, cx).is_ok();
-                            server.client.respond(request.clone(), json!({"applied":applied}));
+                            let (server, request) = (server.clone(), request.clone());
+                            ws.review_language_edits(
+                                &edits,
+                                "Language server edit",
+                                Some(Box::new(move |applied| {
+                                    server.client.respond(request, json!({ "applied": applied }));
+                                })),
+                                window,
+                                cx,
+                            );
                         }
                         ws.refresh_diagnostics(cx);
                         true
@@ -310,9 +344,16 @@ impl Workspace {
             LspEvent::Exited(_) => {}
             LspEvent::ApplyEdit(id, params) => {
                 let edits = forge_lsp::navigation::parse_workspace_edit(params.get("edit").unwrap_or(&Value::Null));
-                let applied = self.apply_file_edits(&edits, window, cx).is_ok();
-                if let Some(s) = &self.lsp.server {
-                    s.client.respond(id, json!({ "applied": applied }));
+                if let Some(server) = self.lsp.server.clone() {
+                    self.review_language_edits(
+                        &edits,
+                        "Python language server edit",
+                        Some(Box::new(move |applied| {
+                            server.client.respond(id, json!({ "applied": applied }));
+                        })),
+                        window,
+                        cx,
+                    );
                 }
             }
         }
@@ -412,46 +453,146 @@ impl Workspace {
         LspPos::new(p.line, utf16_col(doc.buffer.line(p.line), p.col))
     }
 
-    /// Apply edits across files: open files are edited in the editor (one undo step
-    /// each), closed ones on disk. Returns the closed files changed.
+    /// For ordinary typing actions, apply edits to open buffers. Review any
+    /// workspace edit that would write a closed file.
     pub(crate) fn apply_file_edits(
         &mut self,
         edits: &FileEdits,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<Vec<String>, String> {
-        let mut on_disk = Vec::new();
+    ) -> Result<(), String> {
+        if edits.keys().any(|path| self.find_doc(path, cx).is_none()) {
+            self.review_language_edits(edits, "Language server edit", None, window, cx);
+            return Ok(());
+        }
         for (path, list) in edits {
-            let open = self.docs.values().find(|d| same_path(d.read(cx).doc.path(), path)).cloned();
-            match open {
-                Some(doc) => {
-                    let converted: Vec<(Pos, Pos, String)> = {
-                        let d = &doc.read(cx).doc;
-                        list.iter()
-                            .map(|e| {
-                                (
-                                    from_lsp(d.buffer.line(e.start.line), e.start),
-                                    from_lsp(d.buffer.line(e.end.line), e.end),
-                                    e.text.clone(),
-                                )
-                            })
-                            .collect()
-                    };
-                    self.apply_doc_edits(&doc, converted, cx);
-                }
-                None => {
-                    let text = std::fs::read_to_string(path).map_err(|e| format!("Couldn't read {path}: {e}"))?;
-                    std::fs::write(path, apply_edits(&text, list))
-                        .map_err(|e| format!("Couldn't write {path}: {e}"))?;
-                    on_disk.push(path.clone());
-                }
+            if let Some(doc) = self.find_doc(path, cx).map(|id| self.docs[&id].clone()) {
+                let converted: Vec<(Pos, Pos, String)> = {
+                    let d = &doc.read(cx).doc;
+                    list.iter()
+                        .map(|e| {
+                            (
+                                from_lsp(d.buffer.line(e.start.line), e.start),
+                                from_lsp(d.buffer.line(e.end.line), e.end),
+                                e.text.clone(),
+                            )
+                        })
+                        .collect()
+                };
+                self.apply_doc_edits(&doc, converted, cx);
             }
         }
-        if let Some(s) = &self.lsp.server {
-            s.files_changed_on_disk(&on_disk);
-        }
         self.after_edits_applied(cx);
-        Ok(on_disk)
+        Ok(())
+    }
+
+    pub(super) fn review_language_edits(
+        &mut self,
+        edits: &FileEdits,
+        source: &'static str,
+        reply: Option<EditReply>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let review = Rc::new(EditReview { approved: Cell::new(true), reply: RefCell::new(reply) });
+        let root = self.root.clone();
+        let plan = edits
+            .iter()
+            .map(|(path, edits)| -> Result<_, String> {
+                let id = self.find_doc(path, cx);
+                let target = forge_sys::files::canonical_path(Path::new(path));
+                let relative = if let Some(id) = id {
+                    let target = PathBuf::from(self.docs[&id].read(cx).doc.path());
+                    root.as_ref()
+                        .and_then(|root| target.strip_prefix(root).ok())
+                        .map(|relative| relative.to_string_lossy().into_owned())
+                } else {
+                    let root = root.as_ref().ok_or("Open a project before applying edits to closed files.")?;
+                    Some(
+                        target
+                            .strip_prefix(root)
+                            .map_err(|_| "The edit target is outside the project.")?
+                            .to_string_lossy()
+                            .into_owned(),
+                    )
+                };
+                let path = if let (Some(root), Some(relative)) = (&root, &relative) {
+                    forge_sys::connect::project_path(root, relative).map_err(|error| error.to_string())?
+                } else {
+                    target
+                };
+                let mut change = self.generate_text_change(path, cx)?;
+                if id.is_none() && change.disk.is_none() {
+                    return Err(format!("The edit target {} is missing.", change.path.display()));
+                }
+                change.updated = apply_edits(&change.original, edits);
+                Ok(LanguageEdit { relative, document: id, change })
+            })
+            .collect::<Result<Vec<_>, _>>();
+        let plan = match plan {
+            Ok(plan) => plan,
+            Err(error) => return self.alert(error, window, cx),
+        };
+        let len = plan.len();
+        if len == 0 {
+            if let Some(reply) = review.reply.borrow_mut().take() {
+                reply(true);
+            }
+        }
+        for (index, edit) in plan.into_iter().enumerate() {
+            let (before, after) = edit.change.diff();
+            let label = if edit.document.is_some() { "Apply to editor" } else { edit.change.label(self, cx) };
+            let title = format!("{source} · {}", edit.change.path.file_name().unwrap_or_default().to_string_lossy());
+            let (review, root) = (review.clone(), root.clone());
+            self.review_change(
+                ChangeReview::new(title, before, after, label, "Reject", move |apply, ws, window, cx| {
+                    if !apply {
+                        review.approved.set(false);
+                    } else if let Err(error) = ws.apply_language_review(edit, root, source, window, cx) {
+                        review.approved.set(false);
+                        ws.alert(error, window, cx);
+                    }
+                    if index + 1 == len {
+                        if let Some(reply) = review.reply.borrow_mut().take() {
+                            reply(review.approved.get());
+                        }
+                    }
+                }),
+                cx,
+            );
+        }
+    }
+
+    fn apply_language_review(
+        &mut self,
+        edit: LanguageEdit,
+        root: Option<PathBuf>,
+        source: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let LanguageEdit { relative, document: id, change } = edit;
+        if self.root != root || self.find_doc(&change.path.to_string_lossy(), cx) != id {
+            return Err("The project or open documents changed. Request the edit again.".into());
+        }
+        if let (Some(root), Some(relative)) = (root, relative) {
+            if forge_sys::connect::project_path(&root, &relative).as_ref().ok() != Some(&change.path) {
+                return Err("The edit target moved. Request the edit again.".into());
+            }
+        }
+        if let Some(id) = id {
+            change.check(self, cx)?;
+            let encoding = self.docs[&id].read(cx).doc.encoding;
+            self.update_reviewed_doc(id, &change.updated, encoding, false, cx);
+            self.remember_reviewed_edit(id, change.disk, source, cx);
+        } else {
+            let path = change.path.to_string_lossy().into_owned();
+            self.apply_reviewed_text(change, source, window, cx)?;
+            if let Some(server) = self.language_server(&path) {
+                server.files_changed_on_disk(&[path]);
+            }
+        }
+        Ok(())
     }
 
     /// Edit an open document as one undo step (character positions, in any order,
