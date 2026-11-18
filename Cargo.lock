@@ -1966,6 +1966,7 @@ dependencies = [
  "gpui-pre",
  "regex",
  "serde_json",
+ "similar",
  "tempfile",
 ]
 
@@ -1986,6 +1987,7 @@ version = "1.0.0-dev"
 dependencies = [
  "forge-core",
  "forge-lsp",
+ "forge-sys",
  "forge-text",
  "serde",
  "serde_json",
@@ -1997,6 +1999,7 @@ name = "forge-lsp"
 version = "1.0.0-dev"
 dependencies = [
  "forge-core",
+ "forge-sys",
  "futures",
  "regex",
  "serde_json",
@@ -2032,17 +2035,21 @@ dependencies = [
 name = "forge-sys"
 version = "1.0.0-dev"
 dependencies = [
+ "base64 0.22.1",
  "dirs 6.0.0",
  "forge-core",
  "forge-text",
+ "libc",
  "serde",
  "serde-saphyr",
  "serde_json",
  "sha1_smol",
+ "sha2 0.11.1",
  "tempfile",
  "trash",
  "ureq",
  "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2050,6 +2057,8 @@ name = "forge-term"
 version = "1.0.0-dev"
 dependencies = [
  "alacritty_terminal",
+ "forge-sys",
+ "libc",
 ]
 
 [[package]]
@@ -2065,6 +2074,7 @@ dependencies = [
 name = "forge-update"
 version = "1.0.0-dev"
 dependencies = [
+ "forge-sys",
  "semver",
  "serde",
  "serde_json",

@@ -1033,7 +1033,7 @@ impl Render for GraphPanel {
                         .border_1()
                         .border_color(border)
                         .bg(if n.matches { t.bg_active } else { t.raised })
-                        .rounded(px(3.0 * scale))
+                        .rounded(t.corner(px(3.0 * scale)))
                         .p(px(8.0 * scale))
                         .flex()
                         .flex_col()

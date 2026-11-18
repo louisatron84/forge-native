@@ -5,15 +5,12 @@
 //! `src/main/pyenv.ts`.
 
 use crate::python::{is_bare_command, python_candidates};
-use crate::runner::hide_window;
 use forge_core::deps::{
     missing_packages, normalize_name, parse_pip_list, parse_pyproject_dependencies, parse_requirements_txt,
     InstalledPackage, Requirement,
 };
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InterpreterInfo {
@@ -42,44 +39,20 @@ pub struct Output {
 
 /// Run a program and wait (at most `timeout`) for it.
 pub fn run(cmd: &str, args: &[&str], timeout: Duration) -> Output {
-    let mut c = Command::new(cmd);
-    c.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    hide_window(&mut c);
-    let mut child = match c.spawn() {
-        Ok(ch) => ch,
-        Err(e) => return Output { ok: false, stdout: String::new(), stderr: e.to_string() },
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(error) => return Output { ok: false, stdout: String::new(), stderr: error.to_string() },
     };
-    let mut out_pipe = child.stdout.take();
-    let mut err_pipe = child.stderr.take();
-    let out_t = std::thread::spawn(move || {
-        let mut s = Vec::new();
-        if let Some(p) = out_pipe.as_mut() {
-            let _ = p.read_to_end(&mut s);
-        }
-        s
-    });
-    let err_t = std::thread::spawn(move || {
-        let mut s = Vec::new();
-        if let Some(p) = err_pipe.as_mut() {
-            let _ = p.read_to_end(&mut s);
-        }
-        s
-    });
-    let deadline = Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break Some(s),
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
-            _ => {
-                let _ = child.kill();
-                break None;
-            }
-        }
+    let args: Vec<_> = args.iter().map(|arg| (*arg).to_owned()).collect();
+    let result = forge_sys::process::run_captured(cmd, &args, &cwd, &[], "", timeout);
+    let stderr = if result.not_found {
+        format!("Could not find {cmd}")
+    } else if result.failed {
+        format!("Could not start {cmd}")
+    } else {
+        result.stderr
     };
-    let stdout = String::from_utf8_lossy(&out_t.join().unwrap_or_default()).into_owned();
-    let stderr = String::from_utf8_lossy(&err_t.join().unwrap_or_default()).into_owned();
-    let ok = status.is_some_and(|s| s.success());
-    Output { ok, stdout, stderr: if stderr.is_empty() && !ok { "timed out".into() } else { stderr } }
+    Output { ok: result.code == Some(0), stdout: result.stdout, stderr }
 }
 
 const DESCRIBE: &str = "import sys, json; print(json.dumps({\"exe\": sys.executable, \"version\": sys.version.split()[0], \"venv\": sys.prefix != sys.base_prefix, \"prefix\": sys.prefix}))";

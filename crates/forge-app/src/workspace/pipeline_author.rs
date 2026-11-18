@@ -49,54 +49,31 @@ impl Workspace {
             Path::new(d.path()) == path && d.text() == source
         })
     }
-    fn pipeline_write(&mut self, path: &Path, text: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if !path.exists() {
-            let Some(root) = &self.root else {
-                return false;
-            };
-            let Ok(rel) = path.strip_prefix(root) else {
-                return false;
-            };
-            if let Err(e) = forge_sys::files::create_entry(root, &rel.to_string_lossy(), false) {
-                self.alert(e.to_string(), window, cx);
-                return false;
-            }
-        }
-        let id = match self.find_doc(&path.to_string_lossy(), cx) {
-            Some(id) => Some(id),
-            None => match self.load_doc(path, false, cx) {
-                Ok(id) => id,
-                Err(e) => {
-                    self.alert(e, window, cx);
-                    return false;
-                }
-            },
+    fn review_pipeline_write(
+        &mut self,
+        path: &Path,
+        text: String,
+        done: impl FnOnce(&mut Workspace, PathBuf, &mut Window, &mut Context<Workspace>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(root) = self.root.clone() else { return };
+        let Ok(relative) = path.strip_prefix(&root) else {
+            return self.alert("The Pipeline file must be inside the project.", window, cx);
         };
-        let Some(id) = id else {
-            return false;
+        let relative = relative.to_string_lossy().into_owned();
+        let target = match forge_sys::connect::project_path(&root, &relative) {
+            Ok(path) => path,
+            Err(error) => return self.alert(error.to_string(), window, cx),
         };
-        let doc = self.docs[&id].clone();
-        let dirty = doc.read(cx).doc.dirty();
-        doc.update(cx, |d, cx| {
-            d.edit(None, cx, |doc| {
-                let forge_text::Doc { buffer, history, .. } = doc;
-                history.transact(buffer, forge_text::EditKind::Other, forge_text::Pos::new(0, 0), |b| {
-                    b.set_text(text);
-                    forge_text::Pos::new(0, 0)
-                });
-            })
-        });
-        if !dirty {
-            self.save(Some(id), window, cx);
-        }
-        self.file_tree.update(cx, |p, cx| p.refresh_all(cx));
-        true
+        let mut change = match self.generate_text_change(target, cx) {
+            Ok(change) => change,
+            Err(error) => return self.alert(error, window, cx),
+        };
+        change.updated = text;
+        self.review_text_change(change, "Pipeline change", Some((root, relative)), done, cx);
     }
-    fn project_text(&self, path: &Path, cx: &gpui_kit::App) -> String {
-        self.find_doc(&path.to_string_lossy(), cx)
-            .map(|id| self.docs[&id].read(cx).doc.text())
-            .unwrap_or_else(|| std::fs::read_to_string(path).unwrap_or_default())
-    }
+
     pub(super) fn place_pipeline_block(
         &mut self,
         b: &BlockInfo,
@@ -175,12 +152,24 @@ impl Workspace {
             let Ok(helper) = forge_sys::connect::project_path(&root, "forge_blocks.py") else {
                 return;
             };
-            if !helper.exists() && !self.pipeline_write(&helper, BLOCKS_PY, window, cx) {
-                return;
+            if !helper.exists() {
+                return self.review_pipeline_write(
+                    &helper,
+                    BLOCKS_PY.into(),
+                    move |ws, _, window, cx| {
+                        if ws.source_still_matches(&path, &text, cx) {
+                            ws.review_pipeline_write(&path, next, |_, _, _, _| {}, window, cx);
+                        } else {
+                            ws.status_note("The Pipeline source changed. Add the block again.", cx);
+                        }
+                    },
+                    window,
+                    cx,
+                );
             }
         }
         if self.source_still_matches(&path, &text, cx) {
-            self.pipeline_write(&path, &next, window, cx);
+            self.review_pipeline_write(&path, next, |_, _, _, _| {}, window, cx);
         }
     }
     pub(super) fn on_pipeline_author(&mut self, event: &PipelineEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -234,7 +223,13 @@ impl Workspace {
                                 return;
                             }
                             if ws.source_still_matches(&path, &text, cx) {
-                                ws.pipeline_write(&path, &new_pipeline(&text, &name), window, cx);
+                                ws.review_pipeline_write(
+                                    &path,
+                                    new_pipeline(&text, &name),
+                                    |_, _, _, _| {},
+                                    window,
+                                    cx,
+                                );
                             }
                         },
                         window,
@@ -266,7 +261,13 @@ impl Workspace {
                         "Update",
                         move |ws, value, window, cx| {
                             if ws.source_still_matches(&path, &text, cx) {
-                                ws.pipeline_write(&path, &set_argument(&text, &step, index, &value), window, cx);
+                                ws.review_pipeline_write(
+                                    &path,
+                                    set_argument(&text, &step, index, &value),
+                                    |_, _, _, _| {},
+                                    window,
+                                    cx,
+                                );
                             }
                         },
                         window,
@@ -298,20 +299,7 @@ impl Workspace {
                                 ws.status_note("The project or source changed. Export again.", cx);
                                 return;
                             }
-                            let target = match forge_sys::connect::project_path(&root, &name) {
-                                Ok(p) => p,
-                                Err(e) => {
-                                    ws.alert(e.to_string(), window, cx);
-                                    return;
-                                }
-                            };
-                            if target.exists() {
-                                ws.alert("Choose a new filename to preserve existing files.", window, cx);
-                                return;
-                            }
-                            if ws.pipeline_write(&target, &exported, window, cx) {
-                                ws.open_path(target, window, cx);
-                            }
+                            ws.review_project_export(root.clone(), name, exported.clone(), window, cx);
                         },
                         window,
                         cx,
@@ -319,7 +307,7 @@ impl Workspace {
                 });
             }
             PipelineEvent::EditBlock => {
-                let Some((path, text, raw)) = self.pipeline_snapshot(cx) else {
+                let Some((path, text, _)) = self.pipeline_snapshot(cx) else {
                     return;
                 };
                 let p = self.pipeline.read(cx);
@@ -348,13 +336,13 @@ impl Workspace {
                 let Ok(target) = forge_sys::connect::project_path(&root, "blocks.py") else {
                     return;
                 };
-                let content = self.project_text(&target, cx);
-                let Some(copy) = copy_builtin_to(&content, &name) else {
+                let change = match self.generate_text_change(target.clone(), cx) {
+                    Ok(change) => change,
+                    Err(error) => return self.alert(error, window, cx),
+                };
+                let Some(copy) = copy_builtin_to(&change.original, &name) else {
                     return;
                 };
-                if !self.pipeline_write(&target, &copy, window, cx) {
-                    return;
-                }
                 let prefix = "from forge_blocks import ";
                 let mut next = Vec::new();
                 for line in text.lines() {
@@ -368,13 +356,20 @@ impl Workspace {
                     }
                 }
                 let next = import_from(&(next.join("\n") + "\n"), "blocks", &name);
-                if self.source_still_matches(&path, &text, cx) {
-                    self.pipeline_write(&path, &next, window, cx);
-                }
                 let line = copy.lines().position(|l| l.starts_with(&format!("def {name}("))).unwrap_or(0);
-                self.open_path_at(target, Some(line), window, cx);
-                self.reveal_panel("editor", cx);
-                let _ = raw;
+                self.review_pipeline_write(
+                    &target,
+                    copy,
+                    move |ws, target, window, cx| {
+                        if ws.source_still_matches(&path, &text, cx) {
+                            ws.review_pipeline_write(&path, next, |_, _, _, _| {}, window, cx);
+                        }
+                        ws.open_path_at(target, Some(line), window, cx);
+                        ws.reveal_panel("editor", cx);
+                    },
+                    window,
+                    cx,
+                );
             }
             _ => {}
         }

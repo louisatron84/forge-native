@@ -61,7 +61,7 @@ pub fn read_json(path: &Path) -> JsonFile {
 
 pub fn write_json(path: &Path, value: &Value) -> io::Result<()> {
     use std::io::Write;
-    crate::text_file::write_atomic(path, |file| {
+    crate::file_write::replace_with(path, |file| {
         let mut writer = io::BufWriter::new(file);
         serde_json::to_writer_pretty(&mut writer, value).map_err(io::Error::other)?;
         writer.write_all(b"\n")?;
@@ -84,20 +84,29 @@ pub fn legacy_data_dir() -> Option<PathBuf> {
     Some(dirs::config_dir()?.join("ideforfun"))
 }
 
-/// Import compatible Electron state once. Source files are untouched; existing
-/// native state wins. Exclusive temporary files keep interrupted copies retryable.
-pub fn import_legacy(legacy: &Path, native: &Path) -> io::Result<()> {
-    use std::io::{Read, Write};
+pub struct LegacyFile {
+    pub relative: String,
+    pub contents: Vec<u8>,
+}
+
+/// Collect importable Electron files for review. Source files are untouched
+/// and existing native settings always win.
+pub fn plan_legacy_import(legacy: &Path, native: &Path) -> io::Result<Option<Vec<LegacyFile>>> {
     let marker = native.join(".electron-imported");
-    if marker.exists() || !legacy.is_dir() || legacy == native {
-        return Ok(());
+    if marker.try_exists()? || !legacy.is_dir() || legacy == native {
+        return Ok(None);
     }
-    std::fs::create_dir_all(native)?;
-    let canonical_legacy = std::fs::canonicalize(legacy)?;
-    let mut todo = ["settings.json", "keybindings.json", "layouts.json", "recent.json", "workspaces", "templates"]
+    let todo = ["settings.json", "keybindings.json", "layouts.json", "recent.json", "workspaces", "templates"]
         .into_iter()
         .map(PathBuf::from)
         .collect::<Vec<_>>();
+    Ok(Some(plan_legacy_files(legacy, native, todo)?))
+}
+
+pub(crate) fn plan_legacy_files(legacy: &Path, native: &Path, mut todo: Vec<PathBuf>) -> io::Result<Vec<LegacyFile>> {
+    use std::io::Read;
+    let mut files = Vec::new();
+    let canonical_legacy = std::fs::canonicalize(legacy)?;
     let mut total = 0usize;
     let mut entries = 0usize;
     while let Some(relative) = todo.pop() {
@@ -127,7 +136,7 @@ pub fn import_legacy(legacy: &Path, native: &Path) -> io::Result<()> {
             }
         } else if metadata.is_file() {
             let rel = relative.to_string_lossy().replace('\\', "/");
-            let target = crate::connect::project_path(native, &rel)?;
+            let target = if native.exists() { crate::connect::project_path(native, &rel)? } else { native.join(&rel) };
             if std::fs::symlink_metadata(&target).is_ok() {
                 continue;
             }
@@ -137,18 +146,19 @@ pub fn import_legacy(legacy: &Path, native: &Path) -> io::Result<()> {
             if bytes.len() > 16 * 1024 * 1024 || total > 64 * 1024 * 1024 {
                 return Err(io::Error::other("Electron settings exceed the import size limit"));
             }
-            let parent = target.parent().ok_or_else(|| io::Error::other("Invalid import path"))?;
-            std::fs::create_dir_all(parent)?;
-            let mut temp = tempfile::NamedTempFile::new_in(parent)?;
-            temp.write_all(&bytes)?;
-            if let Err(e) = temp.persist_noclobber(target) {
-                if e.error.kind() != io::ErrorKind::AlreadyExists {
-                    return Err(e.error);
-                }
-            }
+            files.push(LegacyFile { relative: rel, contents: bytes });
         }
     }
-    std::fs::write(marker, "Electron settings imported\n")
+    files.sort_by(|a, b| a.relative.cmp(&b.relative));
+    Ok(files)
+}
+
+pub fn finish_legacy_import(native: &Path) -> io::Result<()> {
+    let marker = native.join(".electron-imported");
+    match crate::file_write::create(&marker, "Electron settings imported\n") {
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        result => result,
+    }
 }
 
 pub struct UserState {
@@ -250,7 +260,7 @@ impl UserState {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(path, serde_json::to_string(state).map_err(io::Error::other)?)
+        crate::file_write::replace(&path, serde_json::to_vec(state).map_err(io::Error::other)?)
     }
 }
 
@@ -284,7 +294,7 @@ fn project_file_path(root: &Path, name: &str) -> io::Result<PathBuf> {
     if !PROJECT_FILES.contains(&name) {
         return Err(io::Error::other(format!("Not a project file: {name}")));
     }
-    Ok(root.join(PROJECT_DIR).join(name))
+    crate::connect::project_path(root, &format!("{PROJECT_DIR}/{name}"))
 }
 
 /// A project file's JSON (missing / unreadable are reported).
@@ -311,7 +321,7 @@ pub fn write_project_file(root: &Path, name: &str, value: &Value) -> io::Result<
 /// Change some values in the project settings file, keeping everything else
 /// in it (`null` removes a key).
 pub fn update_project_settings(root: &Path, patch: &serde_json::Map<String, Value>) -> io::Result<()> {
-    let path = project_settings_path(root);
+    let path = crate::connect::project_path(root, &format!("{PROJECT_DIR}/{PROJECT_SETTINGS_FILE}"))?;
     let f = read_json(&path);
     if let Some(e) = f.error() {
         return Err(io::Error::other(format!("{} can't be updated: {e}", path.display())));
@@ -332,7 +342,7 @@ pub fn update_project_settings(root: &Path, patch: &serde_json::Map<String, Valu
 
 /// Create the project settings file (with `initial` in it) if it doesn't exist yet.
 pub fn ensure_project_settings(root: &Path, initial: &ProjectSettings) -> io::Result<PathBuf> {
-    let path = project_settings_path(root);
+    let path = crate::connect::project_path(root, &format!("{PROJECT_DIR}/{PROJECT_SETTINGS_FILE}"))?;
     if matches!(read_json(&path), JsonFile::Missing) {
         write_json(&path, &serde_json::to_value(initial).map_err(io::Error::other)?)?;
     }
@@ -345,15 +355,41 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn json_saves_replace_hardlinks_without_overwriting_their_targets() {
+    fn json_saves_refuse_hardlinks_and_leave_both_names_untouched() {
         let dir = tempfile::tempdir().unwrap();
         let victim = dir.path().join("private.txt");
         let settings = dir.path().join("settings.json");
         std::fs::write(&victim, "keep me").unwrap();
         std::fs::hard_link(&victim, &settings).unwrap();
-        write_json(&settings, &json!({"fontSize": 14})).unwrap();
+        let error = write_json(&settings, &json!({"fontSize": 14})).unwrap_err();
+        assert!(error.to_string().contains("multiple hard links"));
         assert_eq!(std::fs::read_to_string(victim).unwrap(), "keep me");
-        assert_eq!(read_json(&settings).value(), json!({"fontSize": 14}));
+        assert_eq!(std::fs::read_to_string(settings).unwrap(), "keep me");
+    }
+
+    #[test]
+    fn settings_save_updates_the_target_and_keeps_the_symlink() {
+        #[cfg(unix)]
+        use std::os::unix::fs::symlink as symlink_file;
+        #[cfg(windows)]
+        use std::os::windows::fs::symlink_file;
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = UserState::new(dir.path());
+        let target = dir.path().join("custom-settings.json");
+        std::fs::write(&target, "{}").unwrap();
+        if let Err(error) = symlink_file("custom-settings.json", state.settings_path()) {
+            #[cfg(windows)]
+            if error.raw_os_error() == Some(1314) {
+                eprintln!("File symlinks are disabled for this Windows user");
+                return;
+            }
+            panic!("Couldn't create settings symlink: {error}");
+        }
+        let settings = Settings { font_size: 20, ..Settings::default() };
+        state.save_settings(&settings).unwrap();
+        assert_eq!(std::fs::read_link(state.settings_path()).unwrap(), Path::new("custom-settings.json"));
+        assert_eq!(read_json(&target).value()["fontSize"], 20);
     }
 
     #[test]

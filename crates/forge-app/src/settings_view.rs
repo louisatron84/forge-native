@@ -4,8 +4,14 @@
 use crate::app_state;
 use crate::palette::corner_mark;
 use crate::theme::{ForgeTheme, Theme};
-use forge_core::settings::{Density, Formatter, Settings, Theme as ThemeSetting, FONT_SIZE_MAX, FONT_SIZE_MIN};
+use forge_core::settings::{
+    CornerStyle, Density, Formatter, Settings, Theme as ThemeSetting, FONT_SIZE_MAX, FONT_SIZE_MIN,
+};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::{
+    button::Button,
+    menu::{DropdownMenu, PopupMenuItem},
+};
 use gpui_kit::{
     div, prelude::FluentBuilder, px, AnyElement, AppContext, Context, Entity, EventEmitter, FontWeight,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render, SharedString, StatefulInteractiveElement,
@@ -122,13 +128,14 @@ impl SettingsView {
             .flex()
             .border_1()
             .border_color(t.border)
-            .rounded(px(2.0))
+            .rounded(t.corner(px(2.0)))
             .overflow_hidden()
             .children(options.iter().enumerate().map(|(i, (v, label))| {
                 let v = *v;
                 let on = v == value;
                 div()
                     .id(SharedString::from(format!("{id}-{i}")))
+                    .debug_selector(move || format!("settings-{id}-{i}"))
                     .min_w(px(44.0))
                     .px(px(12.0))
                     .py(px(5.0))
@@ -162,7 +169,7 @@ impl SettingsView {
             .justify_center()
             .border_1()
             .border_color(if on { t.heat_2 } else { t.line_strong })
-            .rounded(px(2.0))
+            .rounded(t.corner(px(2.0)))
             .text_size(px(11.0))
             .text_color(t.heat_2)
             .cursor_pointer()
@@ -178,7 +185,7 @@ impl SettingsView {
             .py(px(4.0))
             .border_1()
             .border_color(t.border)
-            .rounded(px(2.0))
+            .rounded(t.corner(px(2.0)))
             .bg(t.bg_panel)
             .cursor_pointer()
             .hover(|s| s.bg(t.bg_hover))
@@ -212,14 +219,21 @@ impl Render for SettingsView {
                 this.update_settings(cx, |s| s.font_size = (s.font_size + 1).min(FONT_SIZE_MAX))
             })))
             .into_any_element();
-        let theme = self.segmented(
-            "theme",
-            &t,
-            &[(ThemeSetting::Molten, "Molten"), (ThemeSetting::Plain, "Plain")],
-            s.theme,
-            |s, v| s.theme = v,
-            cx,
-        );
+        let selected_theme = s.theme;
+        let selected_label =
+            ThemeSetting::ALL.iter().find(|(theme, _)| *theme == selected_theme).map_or("Molten", |(_, label)| *label);
+        let view = cx.entity().downgrade();
+        let theme = div()
+            .debug_selector(|| "settings-theme-picker".into())
+            .child(Button::new("theme-picker").label(format!("{selected_label} ▾")).dropdown_menu(move |menu, _, _| {
+                ThemeSetting::ALL.iter().fold(menu, |menu, &(theme, label)| {
+                    let view = view.clone();
+                    menu.item(PopupMenuItem::new(label).checked(theme == selected_theme).on_click(move |_, _, cx| {
+                        let _ = view.update(cx, |this, cx| this.update_settings(cx, |s| s.theme = theme));
+                    }))
+                })
+            }))
+            .into_any_element();
         let density = self.segmented(
             "density",
             &t,
@@ -229,6 +243,19 @@ impl Render for SettingsView {
             cx,
         );
         let tab = self.segmented("tab", &t, &[(2u32, "2"), (4, "4"), (8, "8")], s.tab_size, |s, v| s.tab_size = v, cx);
+        let corners = self.segmented(
+            "corners",
+            &t,
+            &[
+                (CornerStyle::Square, "Square"),
+                (CornerStyle::Subtle, "Subtle"),
+                (CornerStyle::Rounded, "Rounded"),
+                (CornerStyle::Soft, "Soft"),
+            ],
+            s.corner_style,
+            |s, v| s.corner_style = v,
+            cx,
+        );
         let formatter = self.segmented(
             "formatter",
             &t,
@@ -259,8 +286,9 @@ impl Render for SettingsView {
             .into_any_element();
         let rows = vec![
             Self::row(&t, "Font size", "Editor and terminal text", font),
-            Self::row(&t, "Theme", "Molten: Forge's colours. Plain: black and white, high contrast", theme),
+            Self::row(&t, "Theme", "Choose the colours for Forge and its editor", theme),
             Self::row(&t, "Density", "How much fits in the panels: Compact shows more, Roomy is larger and easier to read (the editor follows the font size)", density),
+            Self::row(&t, "Corner style", "Adjust the corners of tabs, controls, menus and cards", corners),
             Self::row(&t, "Animations", "Animate switching tasks and moving panels (off anyway if your system asks for less motion)", self.checkbox("animations", &t, s.animations, |s, v| s.animations = v, cx)),
             Self::row(&t, "Tab width", "Spaces per indent level (Python uses 4)", tab),
             Self::row(&t, "Python interpreter", "Used by Run (F5). Leave empty for automatic.", python),
@@ -311,7 +339,7 @@ impl Render for SettingsView {
                     .bg(t.bg_panel)
                     .border_1()
                     .border_color(t.border)
-                    .rounded(px(2.0))
+                    .rounded(t.corner(px(2.0)))
                     .shadow_lg()
                     .text_color(t.fg)
                     .text_size(px(13.0))

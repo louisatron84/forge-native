@@ -17,19 +17,29 @@ pub type DeferredHandler = Box<dyn Fn(Value, Value) + std::marker::Send + Sync>;
 
 pub struct LspClient {
     send: Send,
+    outbound: Mutex<()>,
     next_id: AtomicI64,
-    pending: Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>,
+    pending: Mutex<Pending>,
     notifications: Mutex<HashMap<String, Vec<NotificationHandler>>>,
     requests: Mutex<HashMap<String, RequestHandler>>,
     deferred: Mutex<HashMap<String, DeferredHandler>>,
+}
+
+type Call = oneshot::Sender<Result<Value, String>>;
+
+#[derive(Default)]
+struct Pending {
+    calls: HashMap<i64, Call>,
+    closed: Option<String>,
 }
 
 impl LspClient {
     pub fn new(send: Send) -> Arc<Self> {
         Arc::new(Self {
             send,
+            outbound: Mutex::new(()),
             next_id: AtomicI64::new(1),
-            pending: Mutex::new(HashMap::new()),
+            pending: Mutex::new(Pending::default()),
             notifications: Mutex::new(HashMap::new()),
             requests: Mutex::new(HashMap::new()),
             deferred: Mutex::new(HashMap::new()),
@@ -40,18 +50,28 @@ impl LspClient {
     pub fn request(&self, method: &str, params: Value) -> oneshot::Receiver<Result<Value, String>> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = oneshot::channel();
-        if let Ok(mut p) = self.pending.lock() {
+        let _outbound = self.outbound.lock().unwrap_or_else(|e| e.into_inner());
+        let abandoned = {
+            let mut p = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(reason) = &p.closed {
+                let _ = tx.send(Err(reason.clone()));
+                return rx;
+            }
             // Hover/completion tasks are replaced while typing. Their receivers
             // disappear even if the server never replies; retain only live work.
-            p.retain(|_, sender| !sender.is_canceled());
-            p.insert(id, tx);
+            let abandoned = p.calls.extract_if(|_, sender| sender.is_canceled()).map(|(id, _)| id).collect::<Vec<_>>();
+            p.calls.insert(id, tx);
+            abandoned
+        };
+        for id in abandoned {
+            self.cancel(id);
         }
         (self.send)(json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }));
         rx
     }
 
     pub fn notify(&self, method: &str, params: Value) {
-        (self.send)(json!({ "jsonrpc": "2.0", "method": method, "params": params }));
+        self.send_if_open(json!({ "jsonrpc": "2.0", "method": method, "params": params }));
     }
 
     pub fn on_notification(&self, method: &str, handler: impl Fn(Value) + std::marker::Send + Sync + 'static) {
@@ -79,7 +99,18 @@ impl LspClient {
     }
 
     pub fn respond(&self, id: Value, result: Value) {
-        (self.send)(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+        self.send_if_open(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+    }
+
+    fn send_if_open(&self, message: Value) {
+        let _outbound = self.outbound.lock().unwrap_or_else(|e| e.into_inner());
+        if self.pending.lock().is_ok_and(|p| p.closed.is_none()) {
+            (self.send)(message);
+        }
+    }
+
+    fn cancel(&self, id: i64) {
+        (self.send)(json!({ "jsonrpc": "2.0", "method": "$/cancelRequest", "params": { "id": id } }));
     }
 
     pub fn handle_message(&self, msg: Value) {
@@ -89,7 +120,7 @@ impl LspClient {
             // A response to one of our requests.
             (None, Some(id)) => {
                 let Some(id) = id.as_i64() else { return };
-                let Some(tx) = self.pending.lock().ok().and_then(|mut p| p.remove(&id)) else { return };
+                let Some(tx) = self.pending.lock().ok().and_then(|mut p| p.calls.remove(&id)) else { return };
                 let result = match msg.get("error") {
                     Some(e) => Err(e.get("message").and_then(Value::as_str).unwrap_or("error").to_owned()),
                     None => Ok(msg.get("result").cloned().unwrap_or(Value::Null)),
@@ -122,12 +153,22 @@ impl LspClient {
     }
 
     /// Fail everything still waiting (the server stopped or restarted).
-    pub fn dispose(&self, reason: &str) {
-        if let Ok(mut p) = self.pending.lock() {
-            for (_, tx) in p.drain() {
-                let _ = tx.send(Err(reason.to_owned()));
+    pub fn dispose(&self, reason: &str) -> usize {
+        let _outbound = self.outbound.lock().unwrap_or_else(|e| e.into_inner());
+        let requests = {
+            let mut p = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+            if p.closed.is_some() {
+                return 0;
             }
+            p.closed = Some(reason.to_owned());
+            std::mem::take(&mut p.calls)
+        };
+        let count = requests.len();
+        for (id, tx) in requests {
+            let _ = tx.send(Err(reason.to_owned()));
+            self.cancel(id);
         }
+        count
     }
 }
 
@@ -143,6 +184,29 @@ mod tests {
     }
 
     #[test]
+    fn disposing_cancels_all_pending_requests_and_refuses_new_ones() {
+        let (client, sent) = setup();
+        let first = client.request("hover", Value::Null);
+        let second = client.request("completion", Value::Null);
+        client.dispose("server stopped");
+        assert_eq!(futures::executor::block_on(first).unwrap(), Err("server stopped".into()));
+        assert_eq!(futures::executor::block_on(second).unwrap(), Err("server stopped".into()));
+        assert!(client.pending.lock().unwrap().calls.is_empty());
+        let cancelled: std::collections::BTreeSet<_> = sent
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|msg| msg["method"] == "$/cancelRequest")
+            .filter_map(|msg| msg["params"]["id"].as_i64())
+            .collect();
+        assert_eq!(cancelled, [1, 2].into_iter().collect());
+        let before = sent.lock().unwrap().len();
+        let mut late = client.request("late", Value::Null);
+        assert_eq!(late.try_recv().unwrap(), Some(Err("server stopped".into())));
+        assert_eq!(sent.lock().unwrap().len(), before);
+    }
+
+    #[test]
     fn abandoned_requests_do_not_accumulate_while_a_server_is_unresponsive() {
         let (client, _) = setup();
         let live = client.request("keep", Value::Null);
@@ -150,7 +214,7 @@ mod tests {
             drop(client.request("cancelled-hover", Value::Null));
         }
         let next = client.request("next", Value::Null);
-        assert_eq!(client.pending.lock().unwrap().len(), 2);
+        assert_eq!(client.pending.lock().unwrap().calls.len(), 2);
         client.handle_message(json!({"id": 1, "result": "still live"}));
         assert_eq!(futures::executor::block_on(live).unwrap().unwrap(), json!("still live"));
         drop(next);

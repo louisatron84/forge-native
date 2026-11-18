@@ -585,7 +585,7 @@ pub fn actions(panel: &Entity<TestsPanel>, t: &Theme) -> AnyElement {
         div()
             .id(id)
             .px(t.px(6.0))
-            .rounded(t.px(2.0))
+            .rounded(t.corner(t.px(2.0)))
             .text_size(t.px(12.0))
             .text_color(t.fg_muted)
             .cursor_pointer()

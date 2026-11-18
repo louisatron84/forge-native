@@ -8,14 +8,18 @@
 
 use crate::client::LspClient;
 use crate::jsonrpc::{encode_message, MessageReader};
+use forge_sys::process::ManagedChild;
 use serde_json::Value;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::process::{Command, Stdio};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::Duration;
 
 /// The command that starts basedpyright's language server.
 pub const LANGSERVER: &str = "basedpyright-langserver";
+const SESSION_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+const SHUTDOWN_GRACE: Duration = Duration::from_millis(60);
 
 fn exe(name: &str) -> String {
     if cfg!(windows) {
@@ -67,7 +71,25 @@ pub fn tools_python(data_dir: &Path) -> PathBuf {
 /// A running server, wired to an LspClient.
 pub struct ServerProcess {
     pub client: Arc<LspClient>,
-    child: Arc<Mutex<Child>>,
+    child: Arc<Mutex<ManagedChild>>,
+    writer: Writer,
+}
+
+enum Outbound {
+    Message(Value),
+    Close(mpsc::SyncSender<()>),
+}
+
+type Writer = Arc<Mutex<Option<mpsc::Sender<Outbound>>>>;
+
+fn close_writer(writer: &Writer, flush: bool) {
+    let sender = writer.lock().unwrap_or_else(|e| e.into_inner()).take();
+    if let Some(sender) = sender {
+        let (ack, closed) = mpsc::sync_channel(1);
+        if sender.send(Outbound::Close(ack)).is_ok() && flush {
+            let _ = closed.recv_timeout(SHUTDOWN_GRACE);
+        }
+    }
 }
 
 impl ServerProcess {
@@ -80,34 +102,40 @@ impl ServerProcess {
     ) -> std::io::Result<Self> {
         let mut cmd = Command::new(command);
         cmd.args(args).current_dir(cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x0800_0000);
-        }
-        let mut child = cmd.spawn()?;
-        let mut stdin = child.stdin.take().ok_or_else(|| std::io::Error::other("no stdin"))?;
-        let mut stdout = child.stdout.take().ok_or_else(|| std::io::Error::other("no stdout"))?;
-        let mut stderr = child.stderr.take();
-        let (tx, rx) = std::sync::mpsc::channel::<Value>();
+        let mut child = ManagedChild::spawn(&mut cmd, SESSION_TIMEOUT)?;
+        let mut stdin = child.take_stdin().ok_or_else(|| io::Error::other("No language server stdin"))?;
+        let mut stdout = child.take_stdout().ok_or_else(|| io::Error::other("No language server stdout"))?;
+        let mut stderr = child.take_stderr();
+        let (tx, rx) = mpsc::channel();
         // Writing happens on its own thread, so a busy server never blocks the UI.
         std::thread::spawn(move || {
             while let Ok(m) = rx.recv() {
-                if stdin.write_all(&encode_message(&m)).and_then(|_| stdin.flush()).is_err() {
-                    break;
+                match m {
+                    Outbound::Message(message) => {
+                        if stdin.write_all(&encode_message(&message)).and_then(|_| stdin.flush()).is_err() {
+                            break;
+                        }
+                    }
+                    Outbound::Close(closed) => {
+                        drop(stdin);
+                        let _ = closed.send(());
+                        break;
+                    }
                 }
             }
         });
-        let tx = Mutex::new(tx);
+        let writer = Arc::new(Mutex::new(Some(tx)));
+        let outgoing = writer.clone();
         let client = LspClient::new(Arc::new(move |m| {
-            if let Ok(t) = tx.lock() {
-                let _ = t.send(m);
+            if let Some(sender) = outgoing.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+                let _ = sender.send(Outbound::Message(m));
             }
         }));
         let child = Arc::new(Mutex::new(child));
         {
             let client = client.clone();
             let child = child.clone();
+            let writer = writer.clone();
             std::thread::spawn(move || {
                 let mut reader = MessageReader::new();
                 let mut buf = [0u8; 16384];
@@ -119,14 +147,43 @@ impl ServerProcess {
                         client.handle_message(m);
                     }
                     if reader.is_failed() {
-                        if let Ok(mut child) = child.lock() {
-                            let _ = child.kill();
-                        }
                         break;
                     }
                 }
                 client.dispose("the language server stopped");
-                let code = child.lock().ok().and_then(|mut c| c.wait().ok()).and_then(|s| s.code());
+                close_writer(&writer, false);
+                if let Ok(mut child) = child.lock() {
+                    // If stdout closed before the process finished, its protocol
+                    // cannot continue. When it has exited, preserve its code.
+                    if !matches!(child.try_wait(), Ok(Some(_))) {
+                        let _ = child.stop();
+                    }
+                }
+            });
+        }
+        {
+            let child = child.clone();
+            let client = client.clone();
+            let writer = writer.clone();
+            std::thread::spawn(move || {
+                let code = loop {
+                    let status = child
+                        .lock()
+                        .map_err(|_| io::Error::other("Language server process lock failed"))
+                        .and_then(|mut child| child.try_wait());
+                    match status {
+                        Ok(Some(status)) => break status.code(),
+                        Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+                        Err(_) => {
+                            if let Ok(mut child) = child.lock() {
+                                let _ = child.stop();
+                            }
+                            break None;
+                        }
+                    }
+                };
+                client.dispose("the language server stopped");
+                close_writer(&writer, false);
                 on_exit(code);
             });
         }
@@ -145,15 +202,16 @@ impl ServerProcess {
                 }
             }
         });
-        Ok(Self { client, child })
+        Ok(Self { client, child, writer })
     }
 
     pub fn stop(&self) {
         // Settle request futures on the caller before tearing down its executor.
         // EOF may reach the reader much later (or while a callback is blocked).
         self.client.dispose("the language server stopped");
+        close_writer(&self.writer, true);
         if let Ok(mut c) = self.child.lock() {
-            let _ = c.kill();
+            let _ = c.stop();
         }
     }
 }

@@ -1,9 +1,8 @@
-//! Forge's colours and fonts: Molten (the default) and Plain (black and
-//! white, high contrast). Replaces the colour tokens in
-//! `src/renderer/theme.css`; every value here is the same as there.
+//! Forge's colours and fonts. Replaces the colour tokens in `src/renderer/theme.css`.
 
+use forge_core::settings::{CornerStyle, Theme as ThemeName};
 use forge_text::TokenType;
-use gpui_kit::{rgba, FontStyle, FontWeight, Global, Hsla};
+use gpui_kit::{rgba, FontStyle, FontWeight, Global, Hsla, Pixels};
 use std::sync::Arc;
 
 /// The theme every view draws with (switching themes replaces it).
@@ -25,31 +24,6 @@ pub const FONTS: [&[u8]; 7] = [
     include_bytes!("../../../assets/fonts/SpaceGrotesk-Bold.ttf"),
 ];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum ThemeName {
-    #[default]
-    Molten,
-    Plain,
-}
-
-impl ThemeName {
-    /// The id stored in settings ("molten" / "plain").
-    pub fn id(self) -> &'static str {
-        match self {
-            ThemeName::Molten => "molten",
-            ThemeName::Plain => "plain",
-        }
-    }
-
-    pub fn from_id(id: &str) -> Self {
-        if id == "plain" {
-            ThemeName::Plain
-        } else {
-            ThemeName::Molten
-        }
-    }
-}
-
 fn c(hex: u32) -> Hsla {
     rgba(hex).into()
 }
@@ -59,6 +33,7 @@ fn c(hex: u32) -> Hsla {
 pub struct Theme {
     /// Scale panel chrome, never the independently sized editor/terminal.
     pub ui_scale: f32,
+    pub corner_style: CornerStyle,
     pub name: ThemeName,
     pub bg: Hsla,
     pub bg_panel: Hsla,
@@ -122,6 +97,16 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// Adjust an existing radius, preserving any density or zoom scaling.
+    pub fn corner(&self, base: Pixels) -> Pixels {
+        base * match self.corner_style {
+            CornerStyle::Square => 0.0,
+            CornerStyle::Subtle => 1.0,
+            CornerStyle::Rounded => 2.0,
+            CornerStyle::Soft => 3.0,
+        }
+    }
+
     pub fn px(&self, value: f32) -> gpui_kit::Pixels {
         gpui_kit::px(value * self.ui_scale)
     }
@@ -130,12 +115,91 @@ impl Theme {
         match name {
             ThemeName::Molten => Self::molten(),
             ThemeName::Plain => Self::plain(),
+            ThemeName::Midnight => Self::palette(name, [0x101522, 0xe2eafd, 0x9baaca, 0x91afff, 0xc5a8ff, 0x89d9bd]),
+            ThemeName::Slate => Self::palette(name, [0x21252c, 0xe9edf3, 0xaeb8c5, 0x9fc7ef, 0xe0b9cb, 0xb9d3ab]),
+            ThemeName::Aurora => Self::palette(name, [0x11211e, 0xe1f4eb, 0x9cbdb0, 0x83dfb6, 0xc7bcff, 0xbade83]),
+            ThemeName::Ember => Self::palette(name, [0x26181b, 0xf8e7dd, 0xc6a69e, 0xffa881, 0xf4a6c1, 0xe5ca8b]),
+            ThemeName::Orchid => Self::palette(name, [0x21172c, 0xf2e6fa, 0xbca7ce, 0xd9afff, 0xffa9d2, 0xa6dec2]),
+            ThemeName::Ocean => Self::palette(name, [0x10232c, 0xdef4f9, 0x98bdca, 0x7ce1ef, 0xa4baff, 0x9fe2aa]),
+            ThemeName::Parchment => Self::palette(name, [0xf8f0df, 0x34271c, 0x675445, 0x994722, 0x833765, 0x37613e]),
+            ThemeName::Daybreak => Self::palette(name, [0xf3f7fc, 0x192941, 0x4b5f7a, 0x285c9f, 0x694294, 0x246b5b]),
+        }
+    }
+
+    fn palette(name: ThemeName, colors: [u32; 6]) -> Self {
+        let [bg, fg, muted, accent, keyword, string] = colors.map(|rgb| c((rgb << 8) | 0xff));
+        let (err, warn, info) = if name.is_light() {
+            (c(0xae263cff), c(0x815000ff), c(0x25578dff))
+        } else {
+            (c(0xff909cff), c(0xf1c382ff), c(0x95d4ffff))
+        };
+        let neutral = |opacity| bg.blend(fg.opacity(opacity));
+        let tint = |opacity| bg.blend(accent.opacity(opacity));
+        Self {
+            name,
+            bg,
+            fg,
+            fg_muted: muted,
+            accent,
+            on_accent: bg,
+            link: accent,
+            bg_panel: neutral(0.035),
+            raised: neutral(0.07),
+            bg_hover: neutral(0.12),
+            bg_active: tint(0.19),
+            border: neutral(0.17),
+            line_strong: neutral(0.35),
+            heat_1: info,
+            heat_2: accent,
+            heat_3: keyword,
+            heat_4: err,
+            on_heat: bg,
+            err,
+            warn,
+            ok: string,
+            info,
+            selection: tint(0.30),
+            selection_unfocused: tint(0.17),
+            match_bg: warn.opacity(0.23),
+            highlight: accent.opacity(0.12),
+            highlight_strong: accent.opacity(0.28),
+            shade: fg.opacity(0.065),
+            shade_strong: fg.opacity(0.16),
+            breakpoint: err,
+            exec_line: warn.opacity(0.14),
+            exec_arrow: warn,
+            minimap_view: fg.opacity(0.16),
+            git_modified: warn,
+            git_added: string,
+            git_deleted: err,
+            git_conflict: err,
+            diff_add: string.opacity(0.16),
+            diff_del: err.opacity(0.16),
+            conflict_current: string.opacity(0.16),
+            conflict_incoming: info.opacity(0.16),
+            lanes: [accent, info, string, err, keyword, warn, muted, fg],
+            ref_bg: info.opacity(0.18),
+            graph_out: accent,
+            graph_in: info,
+            tok_keyword: keyword,
+            tok_constant: warn,
+            tok_builtin: info,
+            tok_self: muted,
+            tok_function: accent,
+            tok_class: info,
+            tok_call: accent,
+            tok_decorator: keyword,
+            tok_string: string,
+            tok_number: warn,
+            tok_comment: muted,
+            ..Self::molten()
         }
     }
 
     pub fn molten() -> Self {
         Self {
             ui_scale: 1.0,
+            corner_style: CornerStyle::Subtle,
             name: ThemeName::Molten,
             bg: c(0x120c0aff),
             bg_panel: c(0x170e0bff),
@@ -209,6 +273,7 @@ impl Theme {
     pub fn plain() -> Self {
         Self {
             ui_scale: 1.0,
+            corner_style: CornerStyle::Subtle,
             name: ThemeName::Plain,
             bg: c(0x000000ff),
             bg_panel: c(0x000000ff),
@@ -322,13 +387,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn both_themes_define_the_tokens() {
-        for name in [ThemeName::Molten, ThemeName::Plain] {
+    fn all_themes_define_distinct_palettes() {
+        let mut backgrounds = Vec::new();
+        for &(name, _) in ThemeName::ALL {
             let t = Theme::get(name);
             assert_eq!(t.name, name);
             assert_ne!(t.bg, t.fg);
+            assert!(!backgrounds.contains(&t.bg));
+            backgrounds.push(t.bg);
         }
-        assert_eq!(ThemeName::from_id("plain"), ThemeName::Plain);
-        assert_eq!(ThemeName::from_id("anything"), ThemeName::Molten);
     }
 }

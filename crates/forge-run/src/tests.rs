@@ -4,13 +4,12 @@
 
 use crate::env::process_env;
 use crate::pyenv::run;
-use crate::runner::hide_window;
 use forge_core::testing::{find_tests, is_test_file, test_args, TestFile};
-use forge_sys::files::list_files;
+use forge_sys::{files::list_files, process::ManagedChild};
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -48,7 +47,7 @@ pub struct TestRunResult {
 
 /// A test run in progress.
 pub struct TestRun {
-    child: Arc<Mutex<Option<Child>>>,
+    child: Arc<Mutex<Option<ManagedChild>>>,
 }
 
 impl TestRun {
@@ -83,9 +82,8 @@ impl TestRun {
         let mut cmd = Command::new(python);
         cmd.args(&args).current_dir(root).env_clear().envs(process_env(Some(root), &extra));
         cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-        hide_window(&mut cmd);
         let started = Instant::now();
-        let mut child = match cmd.spawn() {
+        let mut child = match ManagedChild::spawn(&mut cmd, Duration::from_secs(60 * 60)) {
             Ok(c) => c,
             Err(e) => {
                 on_done(TestRunResult {
@@ -99,8 +97,8 @@ impl TestRun {
         let output = Arc::new(Mutex::new(String::new()));
         let on_output = Arc::new(on_output);
         let readers: Vec<_> = [
-            child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>),
-            child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>),
+            child.take_stdout().map(|p| Box::new(p) as Box<dyn Read + Send>),
+            child.take_stderr().map(|p| Box::new(p) as Box<dyn Read + Send>),
         ]
         .into_iter()
         .flatten()
@@ -125,15 +123,19 @@ impl TestRun {
         *child_slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
         let slot = child_slot.clone();
         std::thread::spawn(move || {
-            let code = loop {
+            let (code, error) = loop {
                 std::thread::sleep(Duration::from_millis(50));
                 let done = match slot.lock() {
-                    Ok(mut c) => match c.as_mut().map(Child::try_wait) {
-                        Some(Ok(Some(status))) => Some(status.code()),
+                    Ok(mut c) => match c.as_mut().map(ManagedChild::try_wait) {
+                        Some(Ok(Some(status))) => Some((status.code(), None)),
                         Some(Ok(None)) => None,
-                        _ => Some(None),
+                        Some(Err(error)) => {
+                            c.take();
+                            Some((None, Some(error.to_string())))
+                        }
+                        None => Some((None, None)),
                     },
-                    Err(_) => Some(None),
+                    Err(_) => Some((None, None)),
                 };
                 if let Some(code) = done {
                     break code;
@@ -145,13 +147,7 @@ impl TestRun {
             let xml = if pytest { std::fs::read_to_string(&xml_path).ok() } else { None };
             drop(report_dir);
             let output = output.lock().map(|o| o.clone()).unwrap_or_default();
-            on_done(TestRunResult {
-                exit_code: code,
-                output,
-                xml,
-                seconds: started.elapsed().as_secs_f64(),
-                error: None,
-            });
+            on_done(TestRunResult { exit_code: code, output, xml, seconds: started.elapsed().as_secs_f64(), error });
         });
         TestRun { child: child_slot }
     }
@@ -159,9 +155,15 @@ impl TestRun {
     pub fn stop(&self) {
         if let Ok(mut c) = self.child.lock() {
             if let Some(child) = c.as_mut() {
-                let _ = child.kill();
+                let _ = child.stop();
             }
         }
+    }
+}
+
+impl Drop for TestRun {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 

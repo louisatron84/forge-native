@@ -24,7 +24,6 @@ pub enum ConnectEvent {
     Selected,
     Changed,
     Preview,
-    Apply,
     TestCall,
     Env,
     PickMethod,

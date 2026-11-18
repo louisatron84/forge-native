@@ -20,6 +20,17 @@ Upload its contents together to your website's downloads directory:
 and SHA-256 hashes for website download buttons. `SHA256SUMS` lets users verify
 downloads. Metadata is validated against the actual files when combined.
 
+The Forge website serves its preview installers directly from the separate
+`IDE_website` repository under `public/downloads/1.0.0-dev/`. Its
+`SHA256SUMS.txt` covers the six binaries offered on that page. After deployment,
+check the production links and compare the Windows installer hash with the build
+artifact. The website preview and the in-app GitHub update feed are separate.
+
+On 2026-11-17 both production domains served the Windows x64 setup from build
+`4a01eab` and its SHA-256 matched the original artifact. All six binaries at
+`forgecode.uk` returned HTTP 200 with the expected sizes. Both production domains
+served the matching checksum list. Website deployment commit: `98d5428`.
+
 Build locally with Python 3.11+ and Rust on the matching operating system:
 The workflow pins Rust 1.99.1, matching the verified Windows toolchain.
 

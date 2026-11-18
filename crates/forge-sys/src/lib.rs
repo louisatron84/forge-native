@@ -4,7 +4,9 @@
 
 pub mod backups;
 pub mod connect;
+pub mod file_write;
 pub mod files;
+pub mod generated_history;
 pub mod git;
 pub mod openapi;
 pub mod process;

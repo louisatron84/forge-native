@@ -1,6 +1,9 @@
 //! OpenAPI loading and reviewable client/import/environment edits.
 //! Replaces the OpenAPI controller in `renderer/main.ts`.
-use super::Workspace;
+use super::{
+    generated::{ChangeReview, TextChange},
+    Workspace,
+};
 use crate::panels::openapi::OpenApiEvent;
 use forge_core::{
     openapi::{env_keys, read_spec},
@@ -8,21 +11,19 @@ use forge_core::{
 };
 use gpui_kit::{Context, Task, Window};
 use std::{
+    cell::Cell,
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
+    rc::Rc,
 };
 #[derive(Default)]
 pub(super) struct OpenApiState {
     generation: u64,
     worker: Option<Task<()>>,
-    preview: Option<ImportPreview>,
 }
 struct SourceEdit {
     relative: String,
-    path: PathBuf,
-    original: String,
-    disk: Option<String>,
-    updated: String,
+    change: TextChange,
 }
 struct ImportPreview {
     root: PathBuf,
@@ -32,44 +33,24 @@ struct ImportPreview {
     import_current: bool,
     edits: Vec<SourceEdit>,
 }
-fn disk_text(path: &Path) -> Result<Option<String>, String> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    match forge_sys::text_file::read_text_file(path, false, None).map_err(|e| e.to_string())? {
-        forge_sys::text_file::TextFile::Text { text, .. } => Ok(Some(text)),
-        _ => Err("Choose a normal text file.".into()),
-    }
-}
-fn source_edit(root: &Path, relative: &str, open: &HashMap<String, String>) -> Result<SourceEdit, String> {
+fn source_edit(root: &Path, relative: &str, open: &HashMap<String, (String, bool)>) -> Result<SourceEdit, String> {
     let path = forge_sys::connect::project_path(root, relative).map_err(|e| e.to_string())?;
-    let disk = disk_text(&path)?;
-    let original = open
+    let open = open
         .iter()
         .find(|(p, _)| forge_core::tabs::same_path(p, &path.to_string_lossy()))
-        .map(|(_, text)| text.clone())
-        .unwrap_or_else(|| disk.clone().unwrap_or_default());
-    Ok(SourceEdit { relative: relative.into(), path, original: original.clone(), disk, updated: original })
+        .map(|(_, text)| text.clone());
+    Ok(SourceEdit { relative: relative.into(), change: TextChange::read(path, open)? })
 }
 fn prepare_import(
     mut plan: ImportPreview,
     spec: &forge_core::openapi::ApiSpec,
     import_into: Option<String>,
-    open: &HashMap<String, String>,
-) -> Result<(ImportPreview, Vec<String>, bool), String> {
+    open: &HashMap<String, (String, bool)>,
+) -> Result<(ImportPreview, bool), String> {
     let mut client = source_edit(&plan.root, &plan.target, open)?;
-    let replacement = !client.original.is_empty()
-        && generated_state(&client.original).is_none_or(|s| s.edited || s.slug != spec.slug);
-    client.updated = generate_client(spec, Some(&plan.chosen));
-    let mut preview = Vec::new();
-    if replacement {
-        preview.push(format!(
-            "WARNING: {} has hand edits or is not this generated client. Apply will replace the entire file.",
-            plan.target
-        ));
-    }
-    preview.push(format!("Client file: {}", plan.target));
-    preview.extend(client.updated.lines().map(str::to_owned));
+    let replacement = !client.change.original.is_empty()
+        && generated_state(&client.change.original).is_none_or(|s| s.edited || s.slug != spec.slug);
+    client.change.updated = generate_client(spec, Some(&plan.chosen));
     plan.edits.push(client);
     if let Some(relative) = import_into {
         let mut edit = source_edit(&plan.root, &relative, open)?;
@@ -80,31 +61,26 @@ fn prepare_import(
         } else {
             format!("import {} as {}", plan.target.trim_end_matches(".py").replace('/', "."), spec.slug)
         };
-        edit.updated = add_import(&edit.original, &line);
-        preview.push(format!("Import into {relative}: {line}"));
-        if edit.updated != edit.original {
+        edit.change.updated = add_import(&edit.change.original, &line);
+        if edit.change.updated != edit.change.original {
             plan.edits.push(edit)
         }
     }
     let mut env = source_edit(&plan.root, ".env", open)?;
-    let known = forge_core::dotenv::parse_dotenv(&env.original);
+    let known = forge_core::dotenv::parse_dotenv(&env.change.original);
     let names = env_keys(spec);
     let missing = names.iter().filter(|n| !known.contains_key(*n)).collect::<Vec<_>>();
     for name in &missing {
-        env.updated = forge_core::dotenv::set_dotenv_var(
-            &env.updated,
+        env.change.updated = forge_core::dotenv::set_dotenv_var(
+            &env.change.updated,
             name,
             if name.ends_with("_BASE_URL") { &spec.base_url } else { "" },
         );
     }
     if !missing.is_empty() {
-        preview.push(format!(
-            "Add .env names (server URL and empty credentials): {}",
-            missing.into_iter().cloned().collect::<Vec<_>>().join(", ")
-        ));
         plan.edits.push(env)
     }
-    Ok((plan, preview, replacement))
+    Ok((plan, replacement))
 }
 impl Workspace {
     pub(super) fn reset_openapi(&mut self, cx: &mut Context<Self>) {
@@ -157,7 +133,6 @@ impl Workspace {
     fn load_openapi(&mut self, source: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(root) = self.root.clone() else { return self.alert("Open a project folder first.", window, cx) };
         self.openapi_state.generation = self.openapi_state.generation.wrapping_add(1);
-        self.openapi_state.preview = None;
         let generation = self.openapi_state.generation;
         self.openapi.update(cx, |p, cx| {
             p.open = true;
@@ -237,7 +212,7 @@ impl Workspace {
                 wanted
                     .iter()
                     .any(|path| forge_core::tabs::same_path(path, d.doc.path()))
-                    .then(|| (d.doc.path().to_owned(), d.doc.text()))
+                    .then(|| (d.doc.path().to_owned(), (d.doc.text(), d.doc.dirty())))
             })
             .collect::<HashMap<_, _>>();
         let generation = self.openapi_state.generation;
@@ -259,99 +234,82 @@ impl Workspace {
                 }
                 match result {
                     Err(e) => ws.alert(e, window, cx),
-                    Ok((plan, lines, replacement)) => {
-                        ws.openapi_state.preview = Some(plan);
-                        ws.git.diff = None;
-                        ws.git_inspect.update(cx, |p, cx| {
-                            p.text("OpenAPI client preview".into(), lines, cx);
-                            p.action = Some((
-                                "openapi.apply",
-                                if replacement { "Replace edited client and apply" } else { "Apply OpenAPI client" },
-                            ));
-                        });
-                        ws.reveal_panel("editor", cx);
-                        cx.notify();
-                    }
+                    Ok((plan, replacement)) => ws.review_openapi_plan(plan, replacement, cx),
                 }
             })
             .ok();
         }));
     }
-    pub(super) fn apply_openapi_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(plan) = self.openapi_state.preview.take() else { return };
-        if self.root.as_ref() != Some(&plan.root) {
-            return;
+
+    fn review_openapi_plan(&mut self, plan: ImportPreview, replacement: bool, cx: &mut Context<Self>) {
+        let plan = Rc::new(plan);
+        let checked = Rc::new(Cell::new(None));
+        let client_written = Rc::new(Cell::new(false));
+        for (index, edit) in plan.edits.iter().enumerate() {
+            let first = index == 0;
+            let last = index + 1 == plan.edits.len();
+            let (before, after) = edit.change.diff();
+            let label = if first && replacement { "Replace edited client" } else { edit.change.label(self, cx) };
+            let (plan, checked, client_written) = (plan.clone(), checked.clone(), client_written.clone());
+            self.review_change(
+                ChangeReview::new(
+                    format!("OpenAPI client: {}", edit.relative),
+                    before,
+                    after,
+                    label,
+                    "Reject",
+                    move |apply, ws, window, cx| {
+                        if apply {
+                            if let Err(error) = ws.check_openapi_plan(&plan, cx) {
+                                return ws.alert(error, window, cx);
+                            }
+                            if checked.get().is_none() {
+                                let result =
+                                    plan.edits.iter().try_for_each(|edit| edit.change.check(ws, cx).map(|_| ()));
+                                checked.set(Some(result.is_ok()));
+                                if let Err(error) = result {
+                                    return ws.alert(error, window, cx);
+                                }
+                            }
+                            if checked.get() == Some(false) {
+                                return ws.alert("A file changed. Preview the OpenAPI client again.", window, cx);
+                            }
+                            let edit = &plan.edits[index];
+                            if forge_sys::connect::project_path(&plan.root, &edit.relative).ok().as_ref()
+                                != Some(&edit.change.path)
+                            {
+                                return ws.alert("A target moved. Preview the OpenAPI client again.", window, cx);
+                            }
+                            let applied = ws.apply_reviewed_text(edit.change.clone(), "OpenAPI client", window, cx);
+                            if let Err(error) = applied {
+                                return ws.alert(error, window, cx);
+                            }
+                            if first {
+                                client_written.set(true);
+                            }
+                            ws.file_tree.update(cx, |t, cx| t.refresh_all(cx));
+                        }
+                        if last && client_written.get() {
+                            ws.reveal_panel("editor", cx);
+                            ws.open_path(plan.root.join(&plan.target), window, cx);
+                        }
+                    },
+                ),
+                cx,
+            );
         }
+    }
+
+    fn check_openapi_plan(&self, plan: &ImportPreview, cx: &gpui_kit::App) -> Result<(), String> {
         let panel = self.openapi.read(cx);
-        if panel.serial != plan.serial
+        if self.root.as_ref() != Some(&plan.root)
+            || panel.serial != plan.serial
             || panel.chosen != plan.chosen
             || panel.import_current != plan.import_current
             || panel.target.read(cx).value().trim().replace('\\', "/") != plan.target
         {
-            return self.alert("The endpoint selection or client settings changed. Preview again.", window, cx);
+            return Err("The project, endpoints or client settings changed. Preview the client again.".into());
         }
-        for edit in &plan.edits {
-            if forge_sys::connect::project_path(&plan.root, &edit.relative).ok().as_ref() != Some(&edit.path)
-                || disk_text(&edit.path).ok().as_ref() != Some(&edit.disk)
-            {
-                return self.alert(
-                    "A target file changed after preview. Preview again to preserve those edits.",
-                    window,
-                    cx,
-                );
-            }
-            let text = self
-                .find_doc(&edit.path.to_string_lossy(), cx)
-                .and_then(|id| self.docs.get(&id))
-                .map(|d| d.read(cx).doc.text())
-                .unwrap_or_else(|| edit.disk.clone().unwrap_or_default());
-            if text != edit.original {
-                return self.alert(
-                    "A target buffer changed after preview. Preview again to preserve those edits.",
-                    window,
-                    cx,
-                );
-            }
-        }
-        for edit in plan.edits {
-            if !edit.path.exists() {
-                if let Err(e) = forge_sys::files::create_entry(&plan.root, &edit.relative, false) {
-                    return self.alert(e.to_string(), window, cx);
-                }
-            }
-            let loaded = if let Some(id) = self.find_doc(&edit.path.to_string_lossy(), cx) {
-                Ok(Some(id))
-            } else {
-                self.load_doc(&edit.path, false, cx)
-            };
-            let id = match loaded {
-                Ok(Some(id)) => id,
-                Ok(None) => return,
-                Err(e) => return self.alert(e, window, cx),
-            };
-            let doc = self.docs[&id].clone();
-            let dirty = doc.read(cx).doc.dirty();
-            doc.update(cx, |d, cx| {
-                d.edit(None, cx, |doc| {
-                    let forge_text::Doc { buffer, history, .. } = doc;
-                    history.transact(buffer, forge_text::EditKind::Other, forge_text::Pos::new(0, 0), |b| {
-                        b.set_text(&edit.updated);
-                        forge_text::Pos::new(0, 0)
-                    });
-                })
-            });
-            if !dirty && !self.save(Some(id), window, cx) {
-                return;
-            }
-        }
-        self.openapi.update(cx, |p, cx| {
-            p.status = "Applied client, imports and missing environment names. Source edits can be undone.".into();
-            cx.notify();
-        });
-        self.openapi_state.preview = None;
-        self.file_tree.update(cx, |t, cx| t.refresh_all(cx));
-        self.queue_graph_scan(None, cx);
-        self.open_path(plan.root.join(plan.target), window, cx);
-        self.focus_editor(window, cx);
+        Ok(())
     }
 }

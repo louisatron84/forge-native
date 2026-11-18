@@ -2,6 +2,253 @@
 use super::*;
 use gpui_kit::{TestAppContext, VisualTestContext};
 
+fn apply_generated_review(cx: &mut VisualTestContext) {
+    cx.run_until_parked();
+    let apply = cx.debug_bounds("apply-generated-code").expect("Generated change is ready for review");
+    cx.simulate_click(apply.center(), Default::default());
+    cx.run_until_parked();
+}
+
+fn apply_pending_reviews(ws: &Entity<Workspace>, cx: &mut VisualTestContext) {
+    while ws.read_with(cx, |ws, _| !ws.generated_changes.is_empty()) {
+        apply_generated_review(cx);
+    }
+}
+
+fn wait_for_generated_review(cx: &mut VisualTestContext) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        cx.run_until_parked();
+        if cx.debug_bounds("apply-generated-code").is_some() {
+            return;
+        }
+        assert!(std::time::Instant::now() < deadline, "Expected a review before the generated change");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[gpui_kit::test]
+fn legacy_project_settings_can_be_approved_or_rejected_separately(cx: &mut TestAppContext) {
+    let (_data, ws, cx) = setup(cx);
+    let project = tempfile::tempdir().unwrap();
+    let legacy = project.path().join(".ideforfun");
+    std::fs::create_dir(&legacy).unwrap();
+    std::fs::write(legacy.join("run.json"), "{}").unwrap();
+    std::fs::write(legacy.join("settings.json"), r#"{"tabSize":2}"#).unwrap();
+    ws.update_in(cx, |ws, window, cx| ws.open_folder(project.path().into(), window, cx));
+    wait_for_generated_review(cx);
+    assert!(!project.path().join(".forge").exists());
+    let reject = cx.debug_bounds("reject-generated-change").unwrap();
+    cx.simulate_click(reject.center(), Default::default());
+    apply_generated_review(cx);
+    let target = project.path().join(".forge");
+    assert!(!target.join("run.json").exists());
+    assert_eq!(std::fs::read_to_string(target.join("settings.json")).unwrap(), r#"{"tabSize":2}"#);
+    assert!(legacy.join("run.json").exists());
+    assert!(legacy.join("settings.json").exists());
+    ws.read_with(cx, |ws, cx| assert_eq!(ws.effective_settings(cx).tab_size, 2));
+    ws.update_in(cx, |ws, window, cx| {
+        ws.open_path(target.join("settings.json"), window, cx);
+        ws.run_command("file.undoGenerated", window, cx);
+    });
+    assert!(!target.join("settings.json").exists());
+    ws.read_with(cx, |ws, cx| assert_eq!(ws.effective_settings(cx).tab_size, Settings::default().tab_size));
+}
+
+#[gpui_kit::test]
+fn ruff_format_fix_all_and_organize_imports_require_review(cx: &mut TestAppContext) {
+    let (_data, ws, cx) = setup(cx);
+    let project = tempfile::tempdir().unwrap();
+    if !forge_run::tools::Tools::new().available(None, project.path()).0 {
+        return;
+    }
+    let path = project.path().join("example.py");
+    let initial = "import sys\nimport os\nimport math\n\nprint(os.name,  sys.version)\n";
+    std::fs::write(project.path().join("ruff.toml"), "[lint]\nselect = [\"F\"]\n").unwrap();
+    std::fs::write(&path, initial).unwrap();
+    ws.update_in(cx, |ws, window, cx| {
+        ws.open_folder(project.path().into(), window, cx);
+        ws.open_path(path.clone(), window, cx);
+        app_state::update_settings(cx, |settings| settings.format_on_save = true).unwrap();
+        ws.run_command("file.save", window, cx);
+    });
+    wait_for_generated_review(cx);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), initial);
+    let reject = cx.debug_bounds("reject-generated-change").unwrap();
+    cx.simulate_click(reject.center(), Default::default());
+    cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), initial);
+    ws.update_in(cx, |ws, window, cx| ws.run_command("file.save", window, cx));
+    wait_for_generated_review(cx);
+    apply_generated_review(cx);
+    let formatted = std::fs::read_to_string(&path).unwrap();
+    assert!(formatted.contains("print(os.name, sys.version)"));
+
+    ws.update_in(cx, |ws, window, cx| ws.run_command("editor.fixAll", window, cx));
+    wait_for_generated_review(cx);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), formatted);
+    apply_generated_review(cx);
+    ws.read_with(cx, |ws, cx| assert!(!ws.active_doc().unwrap().read(cx).doc.text().contains("import math")));
+
+    ws.update_in(cx, |ws, window, cx| ws.run_command("editor.organizeImports", window, cx));
+    wait_for_generated_review(cx);
+    ws.read_with(cx, |ws, cx| assert!(ws.active_doc().unwrap().read(cx).doc.text().starts_with("import sys")));
+    apply_generated_review(cx);
+    ws.read_with(cx, |ws, cx| assert!(ws.active_doc().unwrap().read(cx).doc.text().starts_with("import os")));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), formatted);
+}
+
+#[gpui_kit::test]
+fn generated_export_requires_review_and_can_be_undone(cx: &mut TestAppContext) {
+    let (_data, ws, cx) = setup(cx);
+    let project = tempfile::tempdir().unwrap();
+    let path = project.path().join("export.py");
+    std::fs::write(&path, "original\n").unwrap();
+    ws.update_in(cx, |ws, window, cx| {
+        ws.open_folder(project.path().into(), window, cx);
+        ws.open_path(path.clone(), window, cx);
+    });
+    let preview = |cx: &mut VisualTestContext| {
+        ws.update_in(cx, |ws, window, cx| {
+            ws.review_project_export(ws.root.clone().unwrap(), "export.py".into(), "generated\n".into(), window, cx);
+        });
+        cx.run_until_parked();
+        ws.read_with(cx, |ws, cx| {
+            assert!(ws.change_review.read(cx).contains_text("-original"));
+            assert!(ws.change_review.read(cx).contains_text("+generated"));
+            assert_eq!(ws.change_review.read(cx).action, Some("Overwrite file"));
+        });
+    };
+    preview(cx);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "original\n");
+    let reject = cx.debug_bounds("reject-generated-change").unwrap();
+    cx.simulate_click(reject.center(), Default::default());
+    cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "original\n");
+    preview(cx);
+    let apply = cx.debug_bounds("apply-generated-code").unwrap();
+    cx.simulate_click(apply.center(), Default::default());
+    cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "generated\n");
+    ws.update_in(cx, |ws, window, cx| {
+        assert_eq!(ws.active_doc().unwrap().read(cx).doc.text(), "generated\n");
+        ws.run_command("file.undoGenerated", window, cx);
+    });
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "original\n");
+}
+
+#[gpui_kit::test]
+fn generated_export_refuses_newer_disk_contents_after_preview(cx: &mut TestAppContext) {
+    let (_data, ws, cx) = setup(cx);
+    let project = tempfile::tempdir().unwrap();
+    let path = project.path().join("export.py");
+    std::fs::write(&path, "original\n").unwrap();
+    ws.update_in(cx, |ws, window, cx| {
+        ws.open_folder(project.path().into(), window, cx);
+        ws.review_project_export(ws.root.clone().unwrap(), "export.py".into(), "generated\n".into(), window, cx);
+    });
+    cx.run_until_parked();
+    std::fs::write(&path, "external edit\n").unwrap();
+    let apply = cx.debug_bounds("apply-generated-code").unwrap();
+    cx.simulate_click(apply.center(), Default::default());
+    cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "external edit\n");
+}
+
+#[gpui_kit::test]
+fn generated_preview_detects_a_clean_editor_that_is_behind_disk(cx: &mut TestAppContext) {
+    let (_data, ws, cx) = setup(cx);
+    let project = tempfile::tempdir().unwrap();
+    let path = project.path().join("export.py");
+    std::fs::write(&path, "original\n").unwrap();
+    ws.update_in(cx, |ws, window, cx| {
+        ws.open_folder(project.path().into(), window, cx);
+        ws.open_path(path.clone(), window, cx);
+    });
+    std::fs::write(&path, "external edit\n").unwrap();
+    ws.update_in(cx, |ws, window, cx| {
+        ws.review_project_export(ws.root.clone().unwrap(), "export.py".into(), "generated\n".into(), window, cx);
+    });
+    cx.run_until_parked();
+    assert!(!cx.debug_bounds("apply-generated-code").is_some());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "external edit\n");
+}
+
+#[gpui_kit::test]
+fn starter_run_config_waits_for_approval(cx: &mut TestAppContext) {
+    let (_data, ws, cx) = setup(cx);
+    let project = tempfile::tempdir().unwrap();
+    let path = project.path().join(".forge/run.json");
+    ws.update_in(cx, |ws, window, cx| {
+        ws.open_folder(project.path().into(), window, cx);
+        ws.run_command("run.editConfigs", window, cx);
+    });
+    cx.run_until_parked();
+    assert!(!path.exists());
+    apply_generated_review(cx);
+    assert!(std::fs::read_to_string(path).unwrap().contains("configurations"));
+}
+
+#[gpui_kit::test]
+fn top_file_menu_opens_files_without_a_project(cx: &mut TestAppContext) {
+    let (_data, ws, cx) = setup(cx);
+    let files = tempfile::tempdir().unwrap();
+    let first = files.path().join("first.txt");
+    let second = files.path().join("second.txt");
+    std::fs::write(&first, "one").unwrap();
+    std::fs::write(&second, "two").unwrap();
+    cx.run_until_parked();
+    let menu = cx.debug_bounds("workspace-menu-File").expect("File menu trigger");
+    cx.simulate_click(menu.center(), Default::default());
+    cx.run_until_parked();
+    cx.simulate_keystrokes("down down down down enter");
+    cx.simulate_path_prompt_response(|options| {
+        assert!(options.files && options.multiple && !options.directories);
+        Some(vec![first, second])
+    });
+    cx.run_until_parked();
+    ws.read_with(cx, |ws, cx| {
+        assert!(ws.root.is_none());
+        assert_eq!(ws.tabs.docs().len(), 2);
+        assert_eq!(ws.active_doc().unwrap().read(cx).doc.text(), "two");
+    });
+}
+
+#[gpui_kit::test]
+fn top_selection_menu_runs_select_all_on_the_editor(cx: &mut TestAppContext) {
+    let (_data, ws, cx) = setup(cx);
+    let project = tempfile::tempdir().unwrap();
+    let path = project.path().join("notes.txt");
+    std::fs::write(&path, "two words").unwrap();
+    ws.update_in(cx, |ws, window, cx| {
+        ws.open_folder(project.path().into(), window, cx);
+        ws.open_path(path, window, cx);
+    });
+    cx.run_until_parked();
+    let bounds = cx.debug_bounds("workspace-menu-Selection").expect("Selection menu trigger");
+    cx.simulate_click(bounds.center(), Default::default());
+    cx.run_until_parked();
+    cx.simulate_keystrokes("down enter");
+    ws.read_with(cx, |ws, cx| assert_eq!(ws.editors[0].read(cx).selected_text(cx), "two words"));
+}
+
+#[gpui_kit::test]
+fn settings_theme_picker_applies_and_saves_a_new_theme(cx: &mut TestAppContext) {
+    let (_data, ws, cx) = setup(cx);
+    ws.update_in(cx, |ws, window, cx| ws.run_command("settings.open", window, cx));
+    cx.run_until_parked();
+    let bounds = cx.debug_bounds("settings-theme-picker").expect("Theme picker trigger");
+    cx.simulate_click(bounds.center(), Default::default());
+    cx.run_until_parked();
+    cx.simulate_keystrokes("down down down enter");
+    ws.read_with(cx, |_, cx| {
+        let midnight = forge_core::settings::Theme::Midnight;
+        assert_eq!(app_state::settings(cx).theme, midnight);
+        assert_eq!(app_state::state(cx).user.settings().0.theme, midnight);
+        assert_eq!(cx.global::<crate::theme::ForgeTheme>().0.name, midnight);
+    });
+}
+
 #[gpui_kit::test]
 fn cancelling_close_cancels_a_requested_update_restart(cx: &mut TestAppContext) {
     let (_data, ws, cx) = setup(cx);
@@ -212,8 +459,10 @@ fn templates_create_a_project_save_it_and_offer_the_user_copy(cx: &mut TestAppCo
     cx.run_until_parked();
     cx.simulate_input("Demo One");
     cx.simulate_keystrokes("enter");
+    assert!(!parent.path().join("Demo One").exists());
     loop {
         cx.run_until_parked();
+        apply_pending_reviews(&ws, cx);
         if ws.read_with(cx, |ws, _| {
             ws.root.as_ref().is_some_and(|r| r.ends_with("Demo One")) && ws.tabs.active().is_some()
         }) {
@@ -229,6 +478,7 @@ fn templates_create_a_project_save_it_and_offer_the_user_copy(cx: &mut TestAppCo
     cx.simulate_keystrokes("enter");
     loop {
         cx.run_until_parked();
+        apply_pending_reviews(&ws, cx);
         if !forge_sys::templates::list_user_templates(&data.path().join("templates")).is_empty() {
             break;
         }
@@ -253,6 +503,7 @@ fn templates_create_a_project_save_it_and_offer_the_user_copy(cx: &mut TestAppCo
     cx.simulate_keystrokes("enter");
     loop {
         cx.run_until_parked();
+        apply_pending_reviews(&ws, cx);
         if parent.path().join("Rain Alert/main.py").exists() {
             break;
         }
@@ -455,6 +706,8 @@ fn pipeline_block_picker_inserts_python_imports_and_preserves_dirty_history(cx: 
     cx.simulate_input("read_csv");
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
+    assert!(!dir.path().join("forge_blocks.py").exists());
+    apply_pending_reviews(&ws, cx);
     ws.read_with(cx, |ws, cx| {
         let d = ws.active_doc().unwrap();
         let d = &d.read(cx).doc;
@@ -478,6 +731,7 @@ fn pipeline_block_picker_inserts_python_imports_and_preserves_dirty_history(cx: 
         let b = forge_core::blocks::builtin_blocks().into_iter().find(|b| b.name == "fill_missing").unwrap();
         ws.place_pipeline_block(&b, true, window, cx);
     });
+    apply_pending_reviews(&ws, cx);
     ws.read_with(cx, |ws, cx| {
         assert!(
             ws.active_doc().unwrap().read(cx).doc.text().contains("data.to_dict(\"records\")"),
@@ -679,6 +933,7 @@ fn api_to_csv_workflow_uses_native_controls_and_runs_the_generated_python(cx: &m
         ws.on_connect_event(&crate::panels::connect::ConnectEvent::IgnoreEnv, window, cx)
     });
     cx.run_until_parked();
+    apply_generated_review(cx);
     assert!(std::fs::read_to_string(project.path().join(".gitignore")).unwrap().contains(".env"));
     let test = cx.debug_bounds("connect-test-call").unwrap();
     cx.simulate_click(test.center(), gpui_kit::Modifiers::default());
@@ -704,6 +959,8 @@ fn api_to_csv_workflow_uses_native_controls_and_runs_the_generated_python(cx: &m
     cx.executor().advance_clock(Duration::from_millis(400));
     cx.run_until_parked();
     let csv = project.path().join("people_data.csv");
+    assert!(!csv.exists());
+    apply_generated_review(cx);
     let expected = "name,plan.name\r\nAnn,pro\r\nBo,free\r\n";
     assert_eq!(std::fs::read_to_string(&csv).unwrap(), expected);
     let review = cx.debug_bounds("connect-preview").unwrap();
@@ -806,6 +1063,7 @@ fn connect_gitignore_offer_preserves_dirty_buffers_and_existing_disk_text(cx: &m
         ws.on_connect_event(&crate::panels::connect::ConnectEvent::IgnoreEnv, window, cx);
     });
     cx.run_until_parked();
+    apply_generated_review(cx);
     assert_eq!(std::fs::read_to_string(path).unwrap(), "target/\n");
     ws.read_with(cx, |ws, cx| {
         let doc = ws.active_doc().unwrap().read(cx);
@@ -939,6 +1197,8 @@ fn connect_keeps_hand_edited_code_and_does_not_rewrite_an_unchanged_csv(cx: &mut
     cx.run_until_parked();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
     let csv = dir.path().join("result.csv");
+    assert!(!csv.exists());
+    apply_generated_review(cx);
     assert!(csv.exists());
     std::fs::write(&csv, "manual CSV edit\n").unwrap();
     ws.update_in(cx, |ws, window, cx| ws.on_connect_event(&crate::panels::connect::ConnectEvent::Changed, window, cx));
@@ -976,6 +1236,7 @@ fn connect_exports_all_response_rows_and_updates_the_selected_columns(cx: &mut T
     cx.run_until_parked();
     cx.executor().advance_clock(Duration::from_millis(400));
     cx.run_until_parked();
+    apply_generated_review(cx);
     let csv = std::fs::read_to_string(dir.path().join("result.csv")).expect("A successful test response exports CSV");
     assert_eq!(csv.lines().count(), 26);
     assert!(csv.contains("24,row 24"));
@@ -986,6 +1247,7 @@ fn connect_exports_all_response_rows_and_updates_the_selected_columns(cx: &mut T
     cx.run_until_parked();
     cx.executor().advance_clock(Duration::from_millis(400));
     cx.run_until_parked();
+    apply_generated_review(cx);
     let csv = std::fs::read_to_string(dir.path().join("result.csv")).unwrap();
     assert!(csv.starts_with("name\r\n"));
     assert!(!csv.contains("24,row"));
@@ -1022,6 +1284,8 @@ fn connect_synchronises_untouched_generated_blocks_without_saving_other_dirty_ed
     cx.run_until_parked();
     cx.executor().advance_clock(Duration::from_millis(400));
     cx.run_until_parked();
+    ws.read_with(cx, |ws, cx| assert!(ws.active_doc().unwrap().read(cx).doc.text().contains("/before")));
+    apply_generated_review(cx);
     ws.read_with(cx, |ws, cx| {
         let doc = ws.active_doc().unwrap().read(cx);
         assert!(doc.doc.text().contains("/after"));
@@ -1073,10 +1337,11 @@ fn openapi_loading_preview_and_apply_preserve_source_and_environment_values(cx: 
     cx.simulate_click(preview.center(), gpui_kit::Modifiers::default());
     cx.run_until_parked();
     assert!(!dir.path().join("api/petstore_client.py").exists());
-    ws.read_with(cx, |ws, cx| assert!(!ws.git_inspect.read(cx).contains_text("keep-private-value")));
+    ws.read_with(cx, |ws, cx| assert!(!ws.change_review.read(cx).contains_text("keep-private-value")));
     let apply = cx.debug_bounds("apply-generated-code").expect("Client preview has Apply action");
     cx.simulate_click(apply.center(), gpui_kit::Modifiers::default());
     cx.run_until_parked();
+    apply_pending_reviews(&ws, cx);
     assert!(std::fs::read_to_string(dir.path().join("api/petstore_client.py")).unwrap().contains("def list_pets("));
     assert!(std::fs::read_to_string(&main)
         .unwrap()
@@ -1100,11 +1365,10 @@ fn openapi_apply_rejects_stale_selection_before_creating_any_files(cx: &mut Test
         ws.on_openapi_event(&crate::panels::openapi::OpenApiEvent::Preview, window, cx);
     });
     cx.run_until_parked();
-    ws.update_in(cx, |ws, window, cx| {
+    ws.update_in(cx, |ws, _window, cx| {
         ws.openapi.update(cx, |p, _| p.chosen.clear());
-        ws.apply_openapi_preview(window, cx);
     });
-    cx.run_until_parked();
+    apply_generated_review(cx);
     assert!(!dir.path().join("api").exists());
     assert!(!dir.path().join(".env").exists());
 }
@@ -1124,8 +1388,7 @@ fn openapi_apply_validates_all_targets_before_writing_the_client(cx: &mut TestAp
     });
     cx.run_until_parked();
     std::fs::write(&env, "# changed after preview\n").unwrap();
-    ws.update_in(cx, |ws, window, cx| ws.apply_openapi_preview(window, cx));
-    cx.run_until_parked();
+    apply_generated_review(cx);
     assert!(!dir.path().join("api").exists());
     assert_eq!(std::fs::read_to_string(env).unwrap(), "# changed after preview\n");
 }
@@ -1220,6 +1483,11 @@ fn api_box_env_preparation_adds_missing_names_without_overwriting_values(cx: &mu
         ws.on_connect_event(&crate::panels::connect::ConnectEvent::Env, window, cx);
     });
     cx.run_until_parked();
+    ws.read_with(cx, |ws, cx| {
+        assert!(ws.change_review.read(cx).contains_text("+MISSING=<hidden>"));
+        assert!(!ws.change_review.read(cx).contains_text("EXISTING=keep"));
+    });
+    apply_generated_review(cx);
     assert_eq!(
         std::fs::read_to_string(dir.path().join(".env")).unwrap(),
         "# credentials\nEXISTING=keep\nMISSING=\"\"\n"
@@ -1257,7 +1525,7 @@ fn api_box_append_preserves_dirty_buffers_and_removal_is_previewed_and_undoable(
     assert!(before.contains("unsaved"));
     ws.update_in(cx, |ws, window, cx| ws.on_connect_event(&ConnectEvent::Preview, window, cx));
     cx.run_until_parked();
-    ws.update_in(cx, |ws, window, cx| ws.on_connect_event(&ConnectEvent::Apply, window, cx));
+    apply_generated_review(cx);
     cx.run_until_parked();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "# disk\n");
     let generated = ws.read_with(cx, |ws, cx| {
@@ -1272,7 +1540,7 @@ fn api_box_append_preserves_dirty_buffers_and_removal_is_previewed_and_undoable(
     cx.simulate_prompt_answer("Preview code removal");
     cx.run_until_parked();
     ws.read_with(cx, |ws, cx| assert_eq!(ws.active_doc().unwrap().read(cx).doc.text(), generated));
-    ws.update_in(cx, |ws, window, cx| ws.on_connect_event(&ConnectEvent::Apply, window, cx));
+    apply_generated_review(cx);
     cx.run_until_parked();
     ws.read_with(cx, |ws, cx| {
         assert!(ws.connect.read(cx).boxes.is_empty());
@@ -1337,7 +1605,7 @@ fn api_box_apply_refuses_a_source_changed_after_preview(cx: &mut TestAppContext)
     cx.run_until_parked();
     assert!(cx.debug_bounds("apply-generated-code").is_some());
     std::fs::write(&path, "# changed outside\n").unwrap();
-    ws.update_in(cx, |ws, window, cx| ws.on_connect_event(&ConnectEvent::Apply, window, cx));
+    apply_generated_review(cx);
     cx.run_until_parked();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "# changed outside\n");
     assert!(cx.has_pending_prompt());
@@ -1563,6 +1831,26 @@ fn resizing_with_a_floating_stack_preserves_its_saved_share(cx: &mut TestAppCont
 }
 
 #[gpui_kit::test]
+fn corner_style_applies_live_to_forge_and_shared_widgets(cx: &mut TestAppContext) {
+    use forge_core::settings::CornerStyle;
+    let (_data, ws, cx) = setup(cx);
+    ws.update_in(cx, |ws, window, cx| ws.run_command("settings.open", window, cx));
+    cx.run_until_parked();
+    for (selector, style, radius) in
+        [("settings-corners-0", CornerStyle::Square, 0.0), ("settings-corners-3", CornerStyle::Soft, 6.0)]
+    {
+        let button = cx.debug_bounds(selector).expect("Corner setting choice");
+        cx.simulate_click(button.center(), Default::default());
+        cx.run_until_parked();
+        ws.read_with(cx, |_, cx| {
+            assert_eq!(app_state::state(cx).user.settings().0.corner_style, style);
+            assert_eq!(cx.global::<crate::theme::ForgeTheme>().0.corner(px(2.0)), px(radius));
+            assert_eq!(cx.global::<gpui_kit::component::Theme>().radius, px(radius));
+        });
+    }
+}
+
+#[gpui_kit::test]
 fn density_changes_panel_geometry_without_resizing_the_editor(cx: &mut TestAppContext) {
     let (_data, ws, cx) = setup(cx);
     let project = tempfile::tempdir().unwrap();
@@ -1656,6 +1944,7 @@ fn setup(cx: &mut TestAppContext) -> (tempfile::TempDir, Entity<Workspace>, &mut
             keys_error: None,
             updater: std::sync::Arc::new(forge_update::Updater::new(data.path().into())),
             restart_after_update: false,
+            legacy_import_offered: false,
         });
         app_state::apply_theme(cx);
         crate::editor::bind_keys(cx);

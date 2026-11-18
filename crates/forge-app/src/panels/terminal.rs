@@ -7,7 +7,7 @@ use forge_term::keys::{key_bytes, paste_bytes};
 use forge_term::screen::{CursorView, Palette, Rgb, Snapshot, XTERM_ANSI};
 use forge_term::shells::{installed_shells, ShellProfile};
 use forge_term::{StartOptions, TermEvent, Terminal};
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use gpui_kit::{
     div, fill, font, point, prelude::FluentBuilder, px, relative, size, AnyElement, App, Bounds, ClipboardItem,
     Context, ElementId, ElementInputHandler, Entity, EventEmitter, FocusHandle, Focusable, FontStyle, FontWeight, Hsla,
@@ -17,6 +17,7 @@ use gpui_kit::{
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
 const PAD: f32 = 6.0;
 
@@ -226,7 +227,15 @@ impl TerminalPanel {
             (None, None) => (None, HashMap::new()),
         };
         let (tx, mut rx) = futures::channel::mpsc::unbounded::<TermEvent>();
-        let opts = StartOptions { program, cwd, env, cols, rows };
+        let opts = StartOptions {
+            program,
+            cwd,
+            env,
+            cols,
+            rows,
+            #[cfg(target_os = "linux")]
+            launcher: if cfg!(test) { None } else { std::env::current_exe().ok() },
+        };
         match Terminal::spawn(opts, move |e| {
             let _ = tx.unbounded_send(e);
         }) {
@@ -239,12 +248,38 @@ impl TerminalPanel {
         }
         let number = s.number;
         s._pump = Some(cx.spawn(async move |this, cx| {
-            while let Some(e) = rx.next().await {
-                if this.update(cx, |p, cx| p.on_term_event(number, e, cx)).is_err() {
-                    break;
+            let timeout = cx.background_executor().timer(Duration::from_secs(24 * 60 * 60)).fuse();
+            futures::pin_mut!(timeout);
+            loop {
+                futures::select! {
+                    event = rx.next().fuse() => {
+                        let Some(event) = event else { break };
+                        let exited = matches!(event, TermEvent::Exited(_));
+                        if this.update(cx, |p, cx| p.on_term_event(number, event, cx)).is_err() || exited {
+                            break;
+                        }
+                    }
+                    () = timeout => {
+                        this.update(cx, |p, cx| {
+                            if let Some(term) = p.sessions.iter().find(|s| s.number == number).and_then(|s| s.term.as_ref()) {
+                                term.show_message("\r\n[Forge stopped this terminal after 24 hours.]\r\n");
+                                term.kill();
+                            }
+                            p.on_term_event(number, TermEvent::Exited(None), cx);
+                        }).ok();
+                        break;
+                    }
                 }
             }
         }));
+    }
+
+    pub fn stop_all(&mut self) {
+        for session in &self.sessions {
+            if let Some(terminal) = &session.term {
+                terminal.kill();
+            }
+        }
     }
 
     fn on_term_event(&mut self, number: usize, e: TermEvent, cx: &mut Context<Self>) {
@@ -546,13 +581,24 @@ impl Render for TerminalPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.global::<ForgeTheme>().0.clone();
         let list = (self.sessions.len() > 1).then(|| {
-            div().flex_none().w(px(150.0)).border_l_1().border_color(t.border).py(px(4.0)).children(
-                self.sessions.iter().enumerate().map(|(i, s)| {
+            div()
+                .flex()
+                .flex_col()
+                .flex_none()
+                .w(px(150.0))
+                .border_l_1()
+                .border_color(t.border)
+                .gap(px(2.0))
+                .p(px(4.0))
+                .children(self.sessions.iter().enumerate().map(|(i, s)| {
                     let on = i == self.active;
                     div()
                         .id(("terminal-item", i))
                         .px(px(8.0))
                         .py(px(3.0))
+                        .flex_none()
+                        .rounded(t.corner(px(3.0)))
+                        .bg(t.raised)
                         .text_size(px(12.0))
                         .whitespace_nowrap()
                         .overflow_hidden()
@@ -566,8 +612,7 @@ impl Render for TerminalPanel {
                             cx.notify();
                         }))
                         .child(format!("{}: {}", s.number, s.name()))
-                }),
-            )
+                }))
         });
         div()
             .id("terminal-panel")
@@ -604,7 +649,7 @@ pub fn actions(panel: &Entity<TerminalPanel>, t: &Theme) -> AnyElement {
         div()
             .id(id)
             .px(px(6.0))
-            .rounded(px(2.0))
+            .rounded(t.corner(px(2.0)))
             .text_size(px(12.0))
             .text_color(t.fg_muted)
             .cursor_pointer()

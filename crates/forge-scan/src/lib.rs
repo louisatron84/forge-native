@@ -3,7 +3,7 @@
 //! it never imports or executes project code. Call these functions off-thread.
 
 use forge_core::project_graph::{RawFile, RawScan};
-use std::{collections::BTreeMap, io::Write, path::Path, time::Duration};
+use std::{collections::BTreeMap, path::Path, time::Duration};
 
 pub const SCAN_SCRIPT: &str = include_str!("../../../python/projectScan.py");
 pub const DATAFLOW_SCRIPT: &str = include_str!("../../../python/dataflow.py");
@@ -94,9 +94,7 @@ fn run_script(
     let mut temporary = None;
     if !overrides.is_empty() || only.is_some() {
         // A private file, removed on success, failure, timeout and bad JSON.
-        let mut file = tempfile::NamedTempFile::new()?;
-        file.write_all(&serde_json::to_vec(overrides)?)?;
-        file.flush()?;
+        let file = forge_sys::file_write::scratch(serde_json::to_vec(overrides)?)?;
         args.extend(["--overrides".into(), file.path().to_string_lossy().into_owned()]);
         temporary = Some(file);
     }

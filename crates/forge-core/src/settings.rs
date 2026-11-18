@@ -9,9 +9,38 @@ use serde_json::{Map, Value};
 pub enum Theme {
     /// Forge's own colours.
     #[default]
+    #[serde(alias = "dark")]
     Molten,
     /// Black and white, high contrast.
+    #[serde(alias = "light")]
     Plain,
+    Midnight,
+    Slate,
+    Aurora,
+    Ember,
+    Orchid,
+    Ocean,
+    Parchment,
+    Daybreak,
+}
+
+impl Theme {
+    pub const ALL: &[(Self, &str)] = &[
+        (Self::Molten, "Molten"),
+        (Self::Plain, "Plain"),
+        (Self::Midnight, "Midnight"),
+        (Self::Slate, "Slate"),
+        (Self::Aurora, "Aurora"),
+        (Self::Ember, "Ember"),
+        (Self::Orchid, "Orchid"),
+        (Self::Ocean, "Ocean"),
+        (Self::Parchment, "Parchment"),
+        (Self::Daybreak, "Daybreak"),
+    ];
+
+    pub fn is_light(self) -> bool {
+        matches!(self, Self::Parchment | Self::Daybreak)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -31,6 +60,16 @@ pub enum Density {
     #[default]
     Normal,
     Roomy,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CornerStyle {
+    Square,
+    #[default]
+    Subtle,
+    Rounded,
+    Soft,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -62,6 +101,9 @@ pub struct Settings {
     pub show_runs_on_graph: bool,
     /// How much fits in the panels.
     pub density: Density,
+    /// Corner rounding for Forge's interface.
+    #[serde(default)]
+    pub corner_style: CornerStyle,
     /// Animate switching tasks and moving panels.
     pub animations: bool,
     /// Keep Forge up to date (download in the background, install on close).
@@ -85,6 +127,7 @@ impl Default for Settings {
             switch_to_debug_task: true,
             show_runs_on_graph: true,
             density: Density::Normal,
+            corner_style: CornerStyle::Subtle,
             animations: true,
             check_for_updates: true,
         }
@@ -126,14 +169,8 @@ pub fn normalize_settings(raw: &Value) -> Settings {
     if let Some(n) = get("fontSize").as_f64().filter(|n| n.is_finite()) {
         s.font_size = (n.round().max(FONT_SIZE_MIN as f64).min(FONT_SIZE_MAX as f64)) as u32;
     }
-    match get("theme").as_str() {
-        Some("molten") => s.theme = Theme::Molten,
-        Some("plain") => s.theme = Theme::Plain,
-        // Settings from before Forge: dark became Molten, light became Plain.
-        Some("dark") => s.theme = Theme::Molten,
-        Some("light") => s.theme = Theme::Plain,
-        _ => {}
-    }
+    s.theme = serde::Deserialize::deserialize(get("theme")).unwrap_or_default();
+    s.corner_style = serde::Deserialize::deserialize(get("cornerStyle")).unwrap_or_default();
     if let Some(t) = tab_size(get("tabSize")) {
         s.tab_size = t;
     }
@@ -242,9 +279,26 @@ mod tests {
 
     #[test]
     fn keeps_valid_values() {
-        let raw = json!({ "fontSize": 18, "theme": "plain", "tabSize": 2, "pythonPath": "C:\\Py\\python.exe", "shell": "gitbash", "reopenLastProject": false, "showWelcome": false, "formatter": "black", "formatOnSave": true, "lintWithRuff": false, "debugInTerminal": false, "switchToDebugTask": false, "showRunsOnGraph": false, "density": "compact", "animations": false, "checkForUpdates": false });
+        let raw = json!({ "fontSize": 18, "theme": "plain", "tabSize": 2, "pythonPath": "C:\\Py\\python.exe", "shell": "gitbash", "reopenLastProject": false, "showWelcome": false, "formatter": "black", "formatOnSave": true, "lintWithRuff": false, "debugInTerminal": false, "switchToDebugTask": false, "showRunsOnGraph": false, "density": "compact", "cornerStyle": "rounded", "animations": false, "checkForUpdates": false });
         let s = normalize_settings(&raw);
         assert_eq!(serde_json::to_value(&s).expect("json"), raw);
+    }
+
+    #[test]
+    fn corner_style_persists_and_legacy_settings_use_subtle_corners() {
+        let mut saved = serde_json::to_value(Settings::default()).unwrap();
+        assert_eq!(saved["cornerStyle"], "subtle");
+        for style in ["square", "subtle", "rounded", "soft"] {
+            saved["cornerStyle"] = json!(style);
+            let normalized = normalize_settings(&saved);
+            assert_eq!(serde_json::to_value(normalized).unwrap()["cornerStyle"], style);
+        }
+        for raw in [json!({}), json!({"cornerStyle": "unknown"}), json!({"cornerStyle": false})] {
+            assert_eq!(serde_json::to_value(normalize_settings(&raw)).unwrap()["cornerStyle"], "subtle");
+        }
+        saved.as_object_mut().unwrap().remove("cornerStyle");
+        let legacy = serde_json::from_value::<Settings>(saved).unwrap();
+        assert_eq!(serde_json::to_value(legacy).unwrap()["cornerStyle"], "subtle");
     }
 
     #[test]
@@ -269,6 +323,14 @@ mod tests {
     fn rejects_unknown_themes_and_tab_sizes() {
         assert_eq!(normalize_settings(&json!({ "theme": "purple" })).theme, Theme::Molten);
         assert_eq!(normalize_settings(&json!({ "tabSize": 3 })).tab_size, 4);
+    }
+
+    #[test]
+    fn every_theme_survives_settings_normalization() {
+        for &(theme, _) in Theme::ALL {
+            let settings = Settings { theme, ..Settings::default() };
+            assert_eq!(normalize_settings(&serde_json::to_value(settings).unwrap()).theme, theme);
+        }
     }
 
     #[test]

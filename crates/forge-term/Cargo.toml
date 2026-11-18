@@ -7,3 +7,9 @@ publish.workspace = true
 
 [dependencies]
 alacritty_terminal = "0.26.0"
+
+[target.'cfg(windows)'.dependencies]
+forge-sys = { path = "../forge-sys" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

@@ -11,7 +11,7 @@ use forge_core::run_config::{
     RUN_FILE,
 };
 use forge_run::{PythonRun, RunEvent, RunSpec};
-use forge_sys::user_state::{ensure_project_file, read_project_file};
+use forge_sys::user_state::read_project_file;
 use futures::StreamExt;
 use gpui_kit::{Context, Entity, Window};
 use std::path::{Path, PathBuf};
@@ -264,14 +264,12 @@ impl Workspace {
         let Some(root) = self.root.clone() else { return };
         let has_requirements = root.join("requirements.txt").is_file();
         let starter = serde_json::to_value(starter_run_file(has_requirements)).unwrap_or_default();
-        match ensure_project_file(&root, RUN_FILE, &starter) {
-            Ok(path) => {
-                self.file_tree.update(cx, |t, cx| t.refresh_all(cx));
-                self.open_path(path, window, cx);
-                self.load_run_file(&root, window, cx);
-            }
-            Err(err) => self.alert(format!("Couldn't create the run configurations file: {err}"), window, cx),
-        }
+        let relative = format!("{}/{RUN_FILE}", forge_core::settings::PROJECT_DIR);
+        let path = match forge_sys::connect::project_path(&root, &relative) {
+            Ok(path) => path,
+            Err(error) => return self.alert(error.to_string(), window, cx),
+        };
+        self.open_config_or_review(path, starter, Some((root, relative)), window, cx);
     }
 
     pub(crate) fn pick_run_config(&mut self, window: &mut Window, cx: &mut Context<Self>) {

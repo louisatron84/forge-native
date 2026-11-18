@@ -8,7 +8,6 @@ use crate::palette::Choice;
 use crate::panels::tests::Which;
 use forge_core::settings::{Theme as ThemeSetting, FONT_SIZE_MAX, FONT_SIZE_MIN};
 use forge_sys::files::create_entry;
-use forge_sys::user_state::ensure_project_settings;
 use forge_text::{Encoding, Eol};
 use gpui_kit::{AppContext, Context, Focusable, PromptLevel, Window};
 use std::path::PathBuf;
@@ -31,10 +30,12 @@ impl Workspace {
             "debug.start" => self.can_launch(),
             "debug.clearBreakpoints" => !self.debug.breakpoints.saved.is_empty(),
             "debug.toggleRaised" => true,
+            "file.saveAll" => self.tabs.docs().into_iter().any(|doc| self.is_dirty(doc, cx)),
             id if id.starts_with("debug.") => self.debug.running,
             id if id.starts_with("git.") => self.git_available(id, cx),
             "editor.toggleComment"
             | "file.save"
+            | "file.undoGenerated"
             | "file.rename"
             | "file.delete"
             | "tab.close"
@@ -123,6 +124,7 @@ impl Workspace {
             // ---------- files and folders ----------
             "help.checkUpdates" => self.check_updates(false, window, cx),
             "help.releaseNotes" => self.show_release_notes(window, cx),
+            "file.open" => self.open_path_dialog(false, window, cx),
             "file.openFolder" => self.open_folder_dialog(window, cx),
             "file.openFolderByPath" => {
                 let initial = self.root.as_ref().map(|r| r.to_string_lossy().into_owned()).unwrap_or_default();
@@ -167,6 +169,10 @@ impl Workspace {
                 self.refresh_recent(cx);
             }
             "file.save" => self.save_active(window, cx),
+            "file.undoGenerated" => self.undo_generated_write(window, cx),
+            "file.saveAll" => {
+                self.save_all_dirty(window, cx);
+            }
             "file.new" => {
                 if self.root.is_some() {
                     self.tasks.reveal("files");
@@ -470,19 +476,22 @@ impl Workspace {
             }
             "settings.project" => {
                 if let Some(root) = self.root.clone() {
-                    match ensure_project_settings(&root, &Default::default()) {
-                        Ok(path) => {
-                            self.file_tree.update(cx, |t, cx| t.refresh_all(cx));
-                            self.open_path(path, window, cx);
-                        }
-                        Err(err) => self.alert(format!("Couldn't create the project settings file: {err}"), window, cx),
-                    }
+                    use forge_core::settings::{PROJECT_DIR, PROJECT_SETTINGS_FILE};
+                    let relative = format!("{PROJECT_DIR}/{PROJECT_SETTINGS_FILE}");
+                    let path = match forge_sys::connect::project_path(&root, &relative) {
+                        Ok(path) => path,
+                        Err(error) => return self.alert(error.to_string(), window, cx),
+                    };
+                    self.open_config_or_review(path, serde_json::json!({}), Some((root, relative)), window, cx);
                 }
             }
-            "keys.openFile" => match app_state::state(cx).user.ensure_keybindings_file() {
-                Ok(path) => self.open_path(path, window, cx),
-                Err(err) => self.alert(format!("Couldn't create the shortcuts file: {err}"), window, cx),
-            },
+            "keys.openFile" => self.open_config_or_review(
+                app_state::state(cx).user.keybindings_path(),
+                serde_json::json!({}),
+                None,
+                window,
+                cx,
+            ),
             "keys.show" => self.show_shortcuts(window, cx),
 
             _ => {
@@ -509,7 +518,7 @@ impl Workspace {
             if let Ok(Ok(Some(path))) = picked.await {
                 this.update_in(cx, |ws, window, cx| {
                     if !path.exists() {
-                        if let Err(err) = std::fs::write(&path, "") {
+                        if let Err(err) = forge_sys::file_write::create(&path, "") {
                             return ws.alert(format!("Couldn't create {}:\n{err}", path.display()), window, cx);
                         }
                     }

@@ -16,6 +16,33 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+#[cfg(windows)]
+type TerminalProcess = forge_sys::process::WindowsJob;
+
+#[cfg(unix)]
+struct TerminalProcess {
+    tty: std::fs::File,
+    session: libc::pid_t,
+}
+
+#[cfg(unix)]
+impl Drop for TerminalProcess {
+    fn drop(&mut self) {
+        use std::os::fd::AsRawFd;
+        let tty = self.tty.as_raw_fd();
+        // Only signal groups still attached to this specific controlling terminal.
+        unsafe {
+            if self.session > 1 && libc::tcgetsid(tty) == self.session {
+                let foreground = libc::tcgetpgrp(tty);
+                if foreground > 1 && foreground != self.session {
+                    libc::killpg(foreground, libc::SIGKILL);
+                }
+                libc::killpg(self.session, libc::SIGKILL);
+            }
+        }
+    }
+}
+
 /// What a terminal tells its view.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TermEvent {
@@ -36,6 +63,7 @@ pub struct Listener {
     events: Arc<dyn Fn(TermEvent) + Send + Sync>,
     /// Replies the program asked for (cursor position, colours...) go back to the pty.
     reply: Arc<FairMutex<Option<EventLoopSender>>>,
+    process: Arc<FairMutex<Option<TerminalProcess>>>,
 }
 
 impl EventListener for Listener {
@@ -46,8 +74,14 @@ impl EventListener for Listener {
             Event::ResetTitle => TermEvent::ResetTitle,
             Event::Bell => TermEvent::Bell,
             Event::ClipboardStore(_, text) => TermEvent::Clipboard(text),
-            Event::ChildExit(status) => TermEvent::Exited(status.code()),
-            Event::Exit => TermEvent::Exited(None),
+            Event::ChildExit(status) => {
+                self.process.lock().take();
+                TermEvent::Exited(status.code())
+            }
+            Event::Exit => {
+                self.process.lock().take();
+                TermEvent::Exited(None)
+            }
             Event::PtyWrite(text) => {
                 if let Some(s) = self.reply.lock().as_ref() {
                     let _ = s.send(Msg::Input(Cow::Owned(text.into_bytes())));
@@ -70,11 +104,15 @@ pub struct StartOptions {
     pub env: HashMap<String, String>,
     pub cols: u16,
     pub rows: u16,
+    /// The Forge executable that configures parent-death before exec on Linux.
+    #[cfg(target_os = "linux")]
+    pub launcher: Option<PathBuf>,
 }
 
 pub struct Terminal {
     term: Arc<FairMutex<Term<Listener>>>,
     sender: EventLoopSender,
+    process: Arc<FairMutex<Option<TerminalProcess>>>,
     size: Size,
 }
 
@@ -83,7 +121,8 @@ impl Terminal {
     /// (on the terminal's reader thread).
     pub fn spawn(opts: StartOptions, on_event: impl Fn(TermEvent) + Send + Sync + 'static) -> io::Result<Terminal> {
         let reply = Arc::new(FairMutex::new(None));
-        let listener = Listener { events: Arc::new(on_event), reply: reply.clone() };
+        let process = Arc::new(FairMutex::new(None));
+        let listener = Listener { events: Arc::new(on_event), reply: reply.clone(), process: process.clone() };
         let cols = opts.cols.max(2);
         let rows = opts.rows.max(2);
         let size = Size { cols: cols as usize, lines: rows as usize };
@@ -93,8 +132,24 @@ impl Terminal {
         env.entry("TERM".into()).or_insert_with(|| "xterm-256color".into());
         env.entry("COLORTERM".into()).or_insert_with(|| "truecolor".into());
         env.entry("TERM_PROGRAM".into()).or_insert_with(|| "Forge".into());
+        let program = opts.program;
+        #[cfg(target_os = "linux")]
+        let program = if let Some(launcher) = opts.launcher {
+            let launcher = launcher
+                .into_os_string()
+                .into_string()
+                .map_err(|_| io::Error::other("Forge's executable path is not valid UTF-8"))?;
+            let (shell, args) = program.unwrap_or_else(|| {
+                (std::env::var("SHELL").ok().filter(|p| !p.is_empty()).unwrap_or_else(|| "/bin/sh".into()), Vec::new())
+            });
+            let mut command = vec!["--forge-terminal-child".into(), std::process::id().to_string(), shell];
+            command.extend(args);
+            Some((launcher, command))
+        } else {
+            program
+        };
         let options = tty::Options {
-            shell: opts.program.map(|(p, a)| tty::Shell::new(p, a)),
+            shell: program.map(|(p, a)| tty::Shell::new(p, a)),
             working_directory: opts.cwd.filter(|d| d.is_dir()),
             drain_on_exit: true,
             env,
@@ -103,11 +158,26 @@ impl Terminal {
         };
         let window = WindowSize { num_lines: rows, num_cols: cols, cell_width: 8, cell_height: 16 };
         let pty = tty::new(&options, window, 0)?;
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::BorrowedHandle;
+            let handle = pty.child_watcher().raw_handle();
+            if !handle.is_null() {
+                // SAFETY: the PTY keeps the handle open while borrowed.
+                let child = unsafe { BorrowedHandle::borrow_raw(handle) };
+                *process.lock() = TerminalProcess::for_terminal(child)?;
+            }
+        }
+        #[cfg(unix)]
+        {
+            *process.lock() =
+                Some(TerminalProcess { tty: pty.file().try_clone()?, session: pty.child().id() as libc::pid_t });
+        }
         let event_loop = EventLoop::new(term.clone(), listener, pty, true, false)?;
         let sender = event_loop.channel();
         *reply.lock() = Some(sender.clone());
         event_loop.spawn();
-        Ok(Terminal { term, sender, size })
+        Ok(Terminal { term, sender, process, size })
     }
 
     /// Send keys or text to the program.
@@ -141,6 +211,7 @@ impl Terminal {
 
     /// End the program (the terminal stays readable).
     pub fn kill(&self) {
+        self.process.lock().take();
         let _ = self.sender.send(Msg::Shutdown);
     }
 

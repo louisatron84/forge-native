@@ -14,18 +14,22 @@ pub const HIDDEN: [&str; 7] = [".git", "node_modules", "__pycache__", ".venv", "
 /// Existing file identity, including Windows 8.3 aliases. Keep ordinary paths
 /// for subprocesses and saved state; missing files retain the caller's spelling.
 pub fn canonical_path(path: &Path) -> PathBuf {
-    let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    canonicalize_path(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+pub(crate) fn canonicalize_path(path: &Path) -> io::Result<PathBuf> {
+    let resolved = std::fs::canonicalize(path)?;
     #[cfg(windows)]
     {
         let text = resolved.to_string_lossy();
         if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
-            return PathBuf::from(format!(r"\\{rest}"));
+            return Ok(PathBuf::from(format!(r"\\{rest}")));
         }
         if let Some(rest) = text.strip_prefix(r"\\?\") {
-            return PathBuf::from(rest);
+            return Ok(PathBuf::from(rest));
         }
     }
-    resolved
+    Ok(resolved)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -114,7 +118,7 @@ pub fn create_entry(dir: &Path, name: &str, is_dir: bool) -> io::Result<PathBuf>
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::OpenOptions::new().write(true).create_new(true).open(&target)?;
+        crate::file_write::create(&target, [])?;
     }
     Ok(target)
 }

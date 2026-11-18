@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 forge-lsp = { path = "../forge-lsp" }
+forge-sys = { path = "../forge-sys" }
 forge-core = { path = "../forge-core" }
 forge-text = { path = "../forge-text" }
 serde = { version = "1", features = ["derive"] }

@@ -192,7 +192,7 @@ impl SearchPanel {
             .h(t.px(22.0))
             .flex()
             .items_center()
-            .rounded(t.px(2.0))
+            .rounded(t.corner(t.px(2.0)))
             .text_size(t.px(12.0))
             .cursor_pointer()
             .when(on, |d| d.bg(t.bg_active).text_color(t.heat_2))
